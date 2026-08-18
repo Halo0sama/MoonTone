@@ -8,8 +8,8 @@ Stream audio from multiple PCs to your Android phone at the same time, mix it on
 ## Screenshots
 
 <p align="center">
-  <img src="screenshots/main.png" width="40%" />
-  <img src="screenshots/multi.png" width="40%" />
+  <img src="screenshots/main.jpg" width="40%" />
+  <img src="screenshots/connected.jpg" width="40%" />
 </p>
 
 ## Features
@@ -110,8 +110,8 @@ python3 tools/mic_receiver.py
 ## 截图
 
 <p align="center">
-  <img src="screenshots/main.png" width="40%" />
-  <img src="screenshots/multi.png" width="40%" />
+  <img src="screenshots/main.jpg" width="40%" />
+  <img src="screenshots/connected.jpg" width="40%" />
 </p>
 
 ## 功能
