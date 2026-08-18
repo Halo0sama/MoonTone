@@ -1,6 +1,78 @@
 # MoonTone
 
-把多台电脑的 Sunshine 音频同时串流到手机，并在手机端混音输出。
+Stream audio from multiple PCs to your Android phone at the same time, mix it on the phone, and control every device from one panel.
+
+> Pure-audio experience: a tiny dummy video stream keeps the session alive; nothing is shown on screen.
+> Multi-device simultaneous streaming: each connection runs in its own Android process, the main process mixes PCM.
+
+## Features
+
+- Connect to any Sunshine host and play PC audio on your phone
+- Connect multiple Sunshine hosts at the same time (currently 32 slots, extendable)
+- Mix multiple PCM streams and output through one AudioTrack
+- Per-device controls: connect / disconnect / mute / volume
+- Auto-reconnect (retries up to 3 times after an unexpected worker disconnect)
+- Adaptive quality / latency modes
+- Real-time audio spec display
+- Microphone uplink (UDP 48100 back to PC)
+- Material You dynamic colors
+
+## Architecture
+
+```
+Main process: UI / MultiController / AudioMixer / AudioTrack
+  ├─ LocalSocket PCM ← Worker :conn1 (PC A)
+  ├─ LocalSocket PCM ← Worker :conn2 (PC B)
+  └─ ...
+```
+
+- Each connection uses an independent `ConnectionWorkerService` process running a Moonlight instance
+- The main process receives PCM and mixes it; the Sunshine server needs no changes
+
+See [`docs/MULTI_CONNECTION.md`](docs/MULTI_CONNECTION.md) for details.
+
+## Build
+
+Requirements: Android SDK / NDK.
+
+```bash
+cd echolink-app
+./gradlew :app:assembleDebug
+```
+
+APK output:
+```
+app/build/outputs/apk/debug/app-debug.apk
+```
+
+## Tools
+
+```bash
+# Connect to a host
+python3 tools/moontone_cli.py connect 192.168.31.174
+
+# Status
+python3 tools/moontone_cli.py status
+
+# Receive microphone uplink on PC
+python3 tools/mic_receiver.py
+```
+
+## Sunshine Compatibility
+
+- The client uses `audioOnly=1` + `x-ml-audio-only:1`
+- For Sunshine builds that do not support audio-only, a dummy video (`640x480@1fps`) keeps the session alive
+- The official macOS prebuilt has a tray thread-safety crash; if you need the tray icon, build from source with the fix (see `SUNSHINE_BUILD.md`)
+
+## License
+
+[MIT](LICENSE)
+
+---
+
+# MoonTone
+
+把多台电脑的 Sunshine 音频同时串流到手机，并在手机端混音输出，所有设备在一个面板统一控制。
 
 > 纯音频体验：使用虚拟视频帧保持会话存活，画面不显示。
 > 多设备同时串流：每路连接运行在独立 Android 进程，主进程统一混音。
@@ -66,4 +138,4 @@ python3 tools/mic_receiver.py
 
 ## License
 
-MIT
+[MIT](LICENSE)
