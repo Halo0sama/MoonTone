@@ -1,0 +1,204 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <uses-feature android:name="android.hardware.wifi" android:required="false" />
+    <uses-feature android:name="android.hardware.audio.output" android:required="true" />
+
+    <application
+        android:name=".MoonToneApp"
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="MoonTone"
+        android:supportsRtl="true"
+        android:usesCleartextTraffic="true"
+        android:theme="@style/Theme.MoonTone">
+
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".audio.MoonToneAudioService"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+
+        <service
+            android:name=".multi.Worker1Service"
+            android:process=":conn1"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker2Service"
+            android:process=":conn2"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker3Service"
+            android:process=":conn3"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker4Service"
+            android:process=":conn4"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker5Service"
+            android:process=":conn5"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker6Service"
+            android:process=":conn6"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker7Service"
+            android:process=":conn7"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker8Service"
+            android:process=":conn8"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker9Service"
+            android:process=":conn9"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker10Service"
+            android:process=":conn10"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker11Service"
+            android:process=":conn11"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker12Service"
+            android:process=":conn12"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker13Service"
+            android:process=":conn13"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker14Service"
+            android:process=":conn14"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker15Service"
+            android:process=":conn15"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker16Service"
+            android:process=":conn16"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker17Service"
+            android:process=":conn17"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker18Service"
+            android:process=":conn18"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker19Service"
+            android:process=":conn19"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker20Service"
+            android:process=":conn20"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker21Service"
+            android:process=":conn21"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker22Service"
+            android:process=":conn22"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker23Service"
+            android:process=":conn23"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker24Service"
+            android:process=":conn24"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker25Service"
+            android:process=":conn25"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker26Service"
+            android:process=":conn26"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker27Service"
+            android:process=":conn27"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker28Service"
+            android:process=":conn28"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker29Service"
+            android:process=":conn29"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker30Service"
+            android:process=":conn30"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker31Service"
+            android:process=":conn31"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+        <service
+            android:name=".multi.Worker32Service"
+            android:process=":conn32"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+    </application>
+</manifest>

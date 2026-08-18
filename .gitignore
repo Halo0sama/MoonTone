@@ -1,0 +1,36 @@
+# Gradle
+.gradle/
+build/
+*/build/
+local.properties
+
+# Android
+*.apk
+*.aab
+*.keystore
+*.jks
+captures/
+
+# Native
+app/src/main/obj/
+app/.cxx/
+app/.externalNativeBuild/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+
+# Sensitive
+*.pem
+*.key
+gh_token.txt
