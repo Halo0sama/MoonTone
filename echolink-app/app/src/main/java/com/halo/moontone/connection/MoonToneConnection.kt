@@ -58,7 +58,8 @@ class MoonToneConnection(private val context: Context) {
     fun connect(
         address: String, appVersion: String = "7.0.0", gfeVersion: String? = null,
         rtspSessionUrl: String, serverCodecModeSupport: Int = 0,
-        audioConfiguration: Int, riAesKey: ByteArray, riAesIv: ByteArray
+        audioConfiguration: Int, riAesKey: ByteArray, riAesIv: ByteArray,
+        audioOnly: Boolean = false
     ) {
         // Moonlight-common-c is not safe to restart while a previous connection is
         // still active: its global stage counter gets corrupted (assertion
@@ -78,7 +79,7 @@ class MoonToneConnection(private val context: Context) {
         bridgeListener.generation = generation
         _state.value = MoonToneState.CONNECTING
         _errorMessage.value = null
-        MoonToneLog.i("Connection", "startConnection address=$address rtsp=$rtspSessionUrl audioConfig=$audioConfiguration")
+        MoonToneLog.i("Connection", "startConnection address=$address rtsp=$rtspSessionUrl audioConfig=$audioConfiguration audioOnly=$audioOnly")
 
         Thread {
             val ret = MoonBridge.startConnection(
@@ -87,7 +88,7 @@ class MoonToneConnection(private val context: Context) {
                 audioConfiguration,
                 MoonBridge.VIDEO_FORMAT_H264,
                 6000, riAesKey, riAesIv,
-                0, 0, 0, 0
+                0, 0, 0, if (audioOnly) 1 else 0
             )
             if (ret != 0) {
                 MoonToneLog.e("Connection", "startConnection returned $ret")

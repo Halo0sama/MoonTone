@@ -1,0 +1,21 @@
+diff --git a/src/tray_darwin.m b/src/tray_darwin.m
+index 2cebb17..e4dfbd6 100644
+--- a/src/tray_darwin.m
++++ b/src/tray_darwin.m
+@@ -114,6 +114,16 @@ int tray_loop(int blocking) {
+ }
+ 
+ void tray_update(struct tray *tray) {
++  // NSStatusItem must only be touched on the main thread. Sunshine calls
++  // tray_update() from network/worker threads (e.g. pairing requests), so
++  // hop to the main queue when needed.
++  if (![NSThread isMainThread]) {
++    dispatch_sync(dispatch_get_main_queue(), ^{
++      tray_update(tray);
++    });
++    return;
++  }
++
+   NSImage *image = [[NSImage alloc] initWithContentsOfFile:[NSString stringWithUTF8String:tray->icon]];
+   NSSize size = NSMakeSize(16, 16);
+   [image setSize:NSMakeSize(16, 16)];

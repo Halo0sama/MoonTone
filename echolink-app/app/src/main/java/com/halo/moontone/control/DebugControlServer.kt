@@ -119,15 +119,6 @@ class DebugControlServer(private val controller: MoonToneController) {
                 res.put("ok", true).put("result", "stopped")
             }
             "micstatus" -> res.put("ok", true).put("running", controller.micStatus())
-            "audiomode" -> {
-                val mode = req.optString("mode").uppercase()
-                if (mode == "LATENCY" || mode == "BALANCED" || mode == "QUALITY") {
-                    controller.setAudioMode(com.halo.moontone.audio.AudioMode.valueOf(mode))
-                    res.put("ok", true).put("mode", mode)
-                } else {
-                    res.put("ok", false).put("error", "mode must be LATENCY, BALANCED or QUALITY")
-                }
-            }
             "logs" -> {
                 val n = req.optInt("lines", 100)
                 res.put("ok", true).put("logs", controller.logTail(n))

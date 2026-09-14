@@ -32,7 +32,15 @@ class StreamKeepAlive(private val app: Context) {
 
         try {
             val wm = app.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-            wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "MoonTone:Stream")
+            // WIFI_MODE_FULL_LOW_LATENCY (API 29+) asks the WiFi firmware for
+            // minimal-latency radio polling; HIGH_PERF alone still lets the
+            // AP/stack batch packets, which shows up as 100-400ms latency
+            // spikes on busy campus networks (measured 2026-09-14).
+            val mode = if (android.os.Build.VERSION.SDK_INT >= 29)
+                WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+            else
+                WifiManager.WIFI_MODE_FULL_HIGH_PERF
+            wifiLock = wm.createWifiLock(mode, "MoonTone:Stream")
                 .apply {
                     setReferenceCounted(false)
                     acquire()

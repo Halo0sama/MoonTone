@@ -3,14 +3,13 @@ package com.halo.moontone.control
 import android.content.Intent
 import androidx.core.content.ContextCompat
 import com.halo.moontone.MoonToneApp
-import com.halo.moontone.audio.AdaptiveAudioController
-import com.halo.moontone.audio.AudioMode
-import com.halo.moontone.audio.AudioStats
-import com.halo.moontone.audio.EnvironmentMonitor
+import com.halo.moontone.audio.AdaptiveLatencyController
 import com.halo.moontone.audio.MoonToneAudioService
 import com.halo.moontone.audio.MoonToneMicCapture
 import com.halo.moontone.audio.StreamKeepAlive
 import com.halo.moontone.connection.MoonToneConnection
+import com.halo.moontone.connection.MoonToneState
+import com.halo.moontone.data.HostCapabilities
 import com.halo.moontone.data.SavedHosts
 import com.limelight.binding.audio.AndroidAudioRenderer
 import com.halo.moontone.connection.MoonTonePairing
@@ -21,8 +20,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -55,17 +54,10 @@ class MoonToneController(private val app: MoonToneApp) {
     var pairingPin: String? = null
         private set
 
-    @Volatile
-    var audioMode: AudioMode = AudioMode.LATENCY
-        private set
-
     private var audioRenderer: AndroidAudioRenderer? = null
-    private var adaptive: AdaptiveAudioController? = null
-    private var statsJob: Job? = null
-    private val environment = EnvironmentMonitor(app)
+    private var latency: AdaptiveLatencyController? = null
     private val keepAlive = StreamKeepAlive(app)
 
-    val audioStats = MutableStateFlow(AudioStats())
     val muted = MutableStateFlow(false)
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -94,22 +86,40 @@ class MoonToneController(private val app: MoonToneApp) {
     /**
      * Launch a session and connect the Moonlight audio pipeline.
      * Blocks until the connection thread has been started.
+     *
+     * Uses the learned per-host audio-only capability; if an audio-only
+     * attempt dies shortly after connecting (stock Sunshine's
+     * "Initial Ping Timeout" signature), the host is remembered and the
+     * session is retried once in dummy-video mode.
      */
-    suspend fun launchAndConnect(host: String) {
+    suspend fun launchAndConnect(host: String, allowFallback: Boolean = true) {
         currentHost = host
         connection.clearError()
         MoonToneLog.i(TAG, "launchSession($host)")
-        pairing.launchSession(host)
         pairing.refreshServerInfo(host)
+        val uid = pairing.serverUniqueId
+        val useAudioOnly = pairing.serverAdvertisesAudioOnly ||
+            HostCapabilities.audioOnly(app, host, uid)
+        try {
+            pairing.launchSession(host, useAudioOnly)
+        } catch (e: Exception) {
+            // Dummy-video launch against the MoonTone-patched host fails with a
+            // 503 (its video probe is intentionally broken). Re-learn the host
+            // as audio-only and retry once.
+            if (!useAudioOnly && allowFallback && e.message?.contains("503") == true) {
+                HostCapabilities.setAudioOnly(app, host, uid, true)
+                MoonToneLog.i(TAG, "$host rejected dummy-video launch (503); retrying audio-only")
+                cleanupSession()
+                return launchAndConnect(host, allowFallback = false)
+            }
+            throw e
+        }
         SavedHosts.add(app, "Mac", host)
 
         val renderer = AndroidAudioRenderer(app, false)
         audioRenderer = renderer
         connection.setAudioRenderer(renderer)
-        environment.start(scope)
-        adaptive = AdaptiveAudioController(renderer, scope) { environment.networkQualityPercent }
-            .also { it.start(audioMode) }
-        startAudioStats()
+        latency = AdaptiveLatencyController(renderer, scope).also { it.start() }
         connection.connect(
             address = host,
             appVersion = pairing.serverAppVersion,
@@ -118,11 +128,58 @@ class MoonToneController(private val app: MoonToneApp) {
             serverCodecModeSupport = pairing.serverCodecModeSupport,
             audioConfiguration = MoonBridge.AUDIO_CONFIGURATION_STEREO.toInt(),
             riAesKey = pairing.riKey,
-            riAesIv = pairing.riKeyId
+            riAesIv = pairing.riKeyId,
+            audioOnly = useAudioOnly
         )
+        // Supervise only after connect() has switched the state to CONNECTING,
+        // otherwise the watcher below can observe the stale DISCONNECTED state
+        // and exit before the session even starts.
+        if (allowFallback) {
+            superviseEarlyDeath(host, useAudioOnly)
+        }
         startAudioService()
         keepAlive.acquire()
         MoonToneLog.i(TAG, "connection thread started, state=${connection.state.value}")
+    }
+
+    /**
+     * Watches an in-flight audio-only attempt: if the session reaches CONNECTED
+     * but is terminated unexpectedly within 20s (stock Sunshine waiting forever
+     * for video pings it never gets), flip the host capability and retry once
+     * in dummy-video mode.
+     */
+    private var fallbackJob: Job? = null
+    private fun superviseEarlyDeath(host: String, useAudioOnly: Boolean) {
+        fallbackJob?.cancel()
+        if (!useAudioOnly) return
+        fallbackJob = scope.launch {
+            val uid = pairing.serverUniqueId
+            val startedAt = System.currentTimeMillis()
+            var connectedSeen = false
+            while (isActive) {
+                when (connection.state.value) {
+                    MoonToneState.CONNECTED -> connectedSeen = true
+                    MoonToneState.DISCONNECTED, MoonToneState.ERROR -> {
+                        // Grace window: ignore state observations from before the
+                        // connection actually got going.
+                        if (connectedSeen || System.currentTimeMillis() - startedAt > 5_000) {
+                            val diedEarly = connectedSeen &&
+                                System.currentTimeMillis() - startedAt < 20_000 &&
+                                connection.errorMessage.value?.startsWith("Connection terminated") == true
+                            if (diedEarly && HostCapabilities.audioOnly(app, host, uid)) {
+                                HostCapabilities.setAudioOnly(app, host, uid, false)
+                                MoonToneLog.i(TAG, "$host does not support audio-only; retrying with dummy video")
+                                cleanupSession()
+                                launchAndConnect(host, allowFallback = false)
+                            }
+                            return@launch
+                        }
+                    }
+                    else -> {}
+                }
+                delay(300)
+            }
+        }
     }
 
     /**
@@ -179,52 +236,17 @@ class MoonToneController(private val app: MoonToneApp) {
     }
 
     private fun cleanupSession() {
-        statsJob?.cancel()
-        statsJob = null
-        adaptive?.stop()
-        adaptive = null
-        environment.stop()
+        latency?.stop()
+        latency = null
         audioRenderer = null
         muted.value = false
         keepAlive.release()
-    }
-
-    fun setAudioMode(mode: AudioMode) {
-        audioMode = mode
-        adaptive?.setMode(mode)
-        MoonToneLog.i(TAG, "audioMode=$mode")
     }
 
     fun setMuted(muted: Boolean) {
         this.muted.value = muted
         audioRenderer?.setMuted(muted)
         MoonToneLog.i(TAG, "muted=$muted")
-    }
-
-    private fun startAudioStats() {
-        statsJob?.cancel()
-        statsJob = scope.launch {
-            while (isActive) {
-                val pending = MoonBridge.getPendingAudioDuration()
-                audioStats.value = AudioStats(
-                    mode = audioMode,
-                    sampleRate = 48000,
-                    channels = 2,
-                    codec = "Opus",
-                    bitrateKbps = 512,
-                    packetMs = 5,
-                    thresholdMs = adaptive?.currentThresholdMs ?: audioStats.value.thresholdMs,
-                    bufferMs = adaptive?.currentBufferMs ?: audioStats.value.bufferMs,
-                    pendingMs = pending,
-                    jitterMs = adaptive?.currentJitterMs ?: audioStats.value.jitterMs,
-                    networkQuality = adaptive?.currentNetworkQuality ?: audioStats.value.networkQuality,
-                    underruns = adaptive?.currentUnderruns ?: audioStats.value.underruns,
-                    uplinkRunning = micStatus(),
-                    uplinkBitrateKbps = 64
-                )
-                kotlinx.coroutines.delay(1000)
-            }
-        }
     }
 
     // ── Microphone uplink (MVP) ─────────────────────────────
@@ -263,11 +285,10 @@ class MoonToneController(private val app: MoonToneApp) {
         put("host", currentHost)
         put("pairingPin", pairingPin ?: "")
         put("paired", try { runBlocking { if (currentHost.isBlank()) false else pairing.isPaired(currentHost) } } catch (e: Exception) { false })
-        put("audioMode", audioMode.name)
-        put("audioThresholdMs", adaptive?.currentThresholdMs ?: 0)
-        put("audioJitterMs", adaptive?.currentJitterMs ?: 0.0)
-        put("networkQuality", adaptive?.currentNetworkQuality ?: 0)
-        put("audioUnderruns", adaptive?.currentUnderruns ?: 0)
+        put("audioThresholdMs", latency?.currentThresholdMs ?: 0)
+        put("audioPendingMs", latency?.lastPendingMs ?: 0)
+        put("audioDropsPerSec", "%.1f".format(latency?.lastDropsPerSec ?: 0.0).toDouble())
+        put("audioUnderrunsPerSec", "%.1f".format(latency?.lastUnderrunsPerSec ?: 0.0).toDouble())
     }
 
     fun logTail(count: Int = 100): String = MoonToneLog.tail(count)

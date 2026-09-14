@@ -136,8 +136,11 @@ object SunshineClient {
             PairConfirmedResult(extractClientCert(xml), extractRiKey(xml), extractRiKeyId(xml))
         }
 
-    suspend fun launchApp(host: String, appId: Int = 1): String = withContext(Dispatchers.IO) {
-        val url = URL("https://$host:$actualHttpsPort/launch?appid=$appId&rikey=echo&rikeyid=1&surroundAudioInfo=196615&uniqueid=$UNIQUE_ID&uuid=${uuid()}")
+    suspend fun launchApp(host: String, appId: Int = 1, audioOnly: Boolean = false): String = withContext(Dispatchers.IO) {
+        // audioOnly=1: official Sunshine ignores it; the MoonTone-patched build skips
+        // display/encoder probing so audio-only hosts work without a capture device.
+        val audioOnlyArg = if (audioOnly) "&audioOnly=1" else ""
+        val url = URL("https://$host:$actualHttpsPort/launch?appid=$appId&rikey=echo&rikeyid=1&surroundAudioInfo=196615&uniqueid=$UNIQUE_ID&uuid=${uuid()}$audioOnlyArg")
         Log.d(TAG, "Launch: $url")
         val conn = openHttpsConnection(url)
         conn.requestMethod = "GET"

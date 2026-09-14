@@ -12,8 +12,8 @@ android {
         applicationId = "com.halo.moontone"
         minSdk = 21
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0-alpha"
+        versionCode = 2
+        versionName = "0.2.0"
 
         ndk {
             // armeabi-v7a 的预编译 libopus.a 在网盘备份中损坏，暂时只出 arm64（目标手机为 arm64）

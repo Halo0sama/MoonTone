@@ -23,6 +23,7 @@ Stream audio from multiple PCs to your Android phone at the same time, mix it on
 - Real-time audio spec display
 - Microphone uplink (UDP 48100 back to PC)
 - Material You dynamic colors
+- In-app update check (GitHub Releases, prompts on new version)
 
 ## Architecture
 
@@ -125,6 +126,7 @@ python3 tools/mic_receiver.py
 - 实时音质规格显示
 - 麦克风上行（UDP 48100 回传 PC）
 - Material You 动态取色
+- 应用内自动检查更新（GitHub Releases，新版本弹窗提示）
 
 ## 架构
 

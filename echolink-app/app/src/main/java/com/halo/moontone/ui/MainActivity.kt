@@ -1,6 +1,7 @@
 package com.halo.moontone.ui
 
 import android.Manifest
+import android.app.AlertDialog
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -8,6 +9,7 @@ import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
@@ -40,21 +42,23 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.halo.moontone.MoonToneApp
-import com.halo.moontone.audio.AudioMode
-import com.halo.moontone.audio.AudioStats
+import com.halo.moontone.BuildConfig
 import com.halo.moontone.audio.MoonToneAudioService
 import com.halo.moontone.connection.MoonToneState
 import com.halo.moontone.control.MoonToneController
 import com.halo.moontone.data.DeviceDiscovery
 import com.halo.moontone.data.DiscoveredHost
+import com.halo.moontone.data.HostCapabilities
 import com.halo.moontone.data.SavedHost
 import com.halo.moontone.data.SavedHosts
 import com.halo.moontone.log.MoonToneLog
 import com.halo.moontone.multi.MultiConnState
 import com.halo.moontone.multi.MultiController
+import com.halo.moontone.update.UpdateChecker
 import com.halo.moontone.ui.theme.MoonToneTheme
 import com.limelight.binding.audio.AndroidAudioRenderer
 import com.limelight.nvstream.jni.MoonBridge
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -83,10 +87,42 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Queries GitHub for the latest release and pops a dialog when it is
+     * newer than the installed version. Best-effort by design: network
+     * failures, rate limits and "no releases yet" all silently no-op.
+     */
+    private fun checkForAppUpdate() {
+        CoroutineScope(Dispatchers.Main).launch {
+            val release = UpdateChecker.fetchLatest() ?: return@launch
+            if (!UpdateChecker.isNewer(release.tagName, BuildConfig.VERSION_NAME)) {
+                MoonToneLog.i("Update", "already on latest (${BuildConfig.VERSION_NAME}, release ${release.tagName})")
+                return@launch
+            }
+            MoonToneLog.i("Update", "new release available: ${release.tagName}")
+            val notes = release.notes.ifBlank { release.title }.take(1200)
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle("发现新版本 ${release.tagName}")
+                .setMessage(
+                    notes + "\n\n当前版本：" + BuildConfig.VERSION_NAME +
+                        "\n更新需要重新安装 APK，完成后配对与设置都会保留。"
+                )
+                .setPositiveButton("前往下载") { _, _ ->
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(release.url)))
+                }
+                .setNegativeButton("以后再说", null)
+                .show()
+        }
+    }
+
     private val permLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Non-blocking update check against GitHub Releases; silently no-ops
+        // on any failure or when already on the latest version.
+        checkForAppUpdate()
 
         // Edge-to-edge (ExpressAssistant style): transparent system bars in theme,
         // content can go under the bottom gesture bar while status bar icons stay visible.
@@ -151,7 +187,6 @@ fun MoonToneUI(controller: MoonToneController, activity: MainActivity) {
     val state by connection.state.collectAsState()
     val stageMessage by connection.stageMessage.collectAsState()
     val errorMessage by connection.errorMessage.collectAsState()
-    val audioStats by controller.audioStats.collectAsState()
     val muted by controller.muted.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -172,7 +207,6 @@ fun MoonToneUI(controller: MoonToneController, activity: MainActivity) {
     var moonToneCert by remember { mutableStateOf("") }
     var showLogs by remember { mutableStateOf(false) }
     var micEnabled by remember { mutableStateOf(false) }
-    var audioMode by remember { mutableStateOf(controller.audioMode) }
 
     // Saved hosts (Moonlight-style device list)
     var savedHosts by remember { mutableStateOf(SavedHosts.load(context)) }
@@ -246,7 +280,9 @@ fun MoonToneUI(controller: MoonToneController, activity: MainActivity) {
                             ?: ByteArray(16),
                         riAesIv = riKeyIdHex.takeIf { it.isNotBlank() }
                             ?.chunked(2)?.map { it.toInt(16).toByte() }?.toByteArray()
-                            ?: ByteArray(16)
+                            ?: ByteArray(16),
+                        audioOnly = controller.pairing.serverAdvertisesAudioOnly ||
+                            HostCapabilities.audioOnly(context, hostT, controller.pairing.serverUniqueId)
                     )
                     activity.startAudioService()
                     SavedHosts.add(context, "Mac", hostT)
@@ -310,53 +346,6 @@ fun MoonToneUI(controller: MoonToneController, activity: MainActivity) {
 
                         // Output device hint (multi-device mixing: PC audio + phone audio)
                         OutputDeviceHint(context)
-
-                        Spacer(Modifier.height(8.dp))
-
-                        // Adaptive audio mode (latency / balanced / quality)
-                        Card(
-                            Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant
-                            )
-                        ) {
-                            Column(Modifier.fillMaxWidth().padding(16.dp)) {
-                                Text("音质 / 延迟模式", fontWeight = FontWeight.Medium)
-                                Spacer(Modifier.height(8.dp))
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    FilterChip(
-                                        selected = audioMode == AudioMode.LATENCY,
-                                        onClick = {
-                                            audioMode = AudioMode.LATENCY
-                                            controller.setAudioMode(AudioMode.LATENCY)
-                                        },
-                                        label = { Text("延迟优先") }
-                                    )
-                                    FilterChip(
-                                        selected = audioMode == AudioMode.BALANCED,
-                                        onClick = {
-                                            audioMode = AudioMode.BALANCED
-                                            controller.setAudioMode(AudioMode.BALANCED)
-                                        },
-                                        label = { Text("均衡") }
-                                    )
-                                    FilterChip(
-                                        selected = audioMode == AudioMode.QUALITY,
-                                        onClick = {
-                                            audioMode = AudioMode.QUALITY
-                                            controller.setAudioMode(AudioMode.QUALITY)
-                                        },
-                                        label = { Text("音质优先") }
-                                    )
-                                }
-                                Spacer(Modifier.height(4.dp))
-                                Text(
-                                    "自动实时调整，不卡顿优先",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
 
                         Spacer(Modifier.height(8.dp))
 
@@ -491,7 +480,7 @@ fun MoonToneUI(controller: MoonToneController, activity: MainActivity) {
 
                         Spacer(Modifier.height(8.dp))
 
-                        // Real-time audio quality specs (auto-adaptive)
+                        // Audio stream specs (stock moonlight-android pipeline)
                         Card(
                             Modifier.fillMaxWidth(),
                             colors = CardDefaults.cardColors(
@@ -504,33 +493,27 @@ fun MoonToneUI(controller: MoonToneController, activity: MainActivity) {
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Text("下行编码", style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Text("${audioStats.codec} · ${audioStats.sampleRate} Hz · ${audioStats.channels} ch",
+                                    Text("Opus · 48000 Hz · 2 ch",
                                         style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
                                 }
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Text("下行码率", style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Text("${audioStats.bitrateKbps} kbps · ${audioStats.packetMs} ms/包",
+                                    Text("512 kbps · 5 ms/包",
                                         style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
                                 }
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("缓冲 / 阈值", style = MaterialTheme.typography.bodySmall,
+                                    Text("缓冲策略", style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Text("${audioStats.bufferMs} ms / ${audioStats.thresholdMs} ms · 待播 ${audioStats.pendingMs} ms",
-                                        style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
-                                }
-                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("环境检测", style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Text("${"%.1f".format(audioStats.jitterMs)} ms 抖动 · 网络 ${audioStats.networkQuality} · 欠载 ${audioStats.underruns}",
+                                    Text("动态低延时 40–600 ms（自动调参）",
                                         style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
                                 }
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Text("上行麦克风", style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     Text(
-                                        if (audioStats.uplinkRunning) {
-                                            "${audioStats.uplinkBitrateKbps} kbps · 运行中"
+                                        if (controller.micStatus()) {
+                                            "64 kbps · 运行中"
                                         } else {
                                             "未开启"
                                         },

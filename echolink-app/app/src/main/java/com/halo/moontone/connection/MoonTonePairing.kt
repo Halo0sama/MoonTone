@@ -196,6 +196,21 @@ class MoonTonePairing(private val crypto: MoonToneCrypto) {
     var serverCodecModeSupport: Int = 0
         private set
 
+    /** Stable host identity from /serverinfo (survives DHCP address changes). */
+    var serverUniqueId: String? = null
+        private set
+
+    /**
+     * Whether the host explicitly advertises audio-only support via an
+     * <AudioOnly>1</AudioOnly> marker in /serverinfo (MoonTone-patched builds
+     * may advertise this). Stock Sunshine never sets it, but it also reports
+     * the same fake appversion (7.1.431) as patched builds, so the version
+     * string cannot discriminate — runtime fallback handles those hosts
+     * (see HostCapabilities).
+     */
+    var serverAdvertisesAudioOnly: Boolean = false
+        private set
+
     /**
      * Query Sunshine's HTTPS serverinfo: updates server capability fields and
      * reports whether this host already trusts us.
@@ -209,7 +224,9 @@ class MoonTonePairing(private val crypto: MoonToneCrypto) {
             xmlTag(xml, "appversion")?.let { serverAppVersion = it }
             xmlTag(xml, "GfeVersion")?.let { serverGfeVersion = it }
             xmlTag(xml, "ServerCodecModeSupport")?.toIntOrNull()?.let { serverCodecModeSupport = it }
-            MoonToneLog.i("Pairing", "serverinfo: appVersion=$serverAppVersion codecMode=$serverCodecModeSupport")
+            serverUniqueId = xmlTag(xml, "uniqueid")
+            serverAdvertisesAudioOnly = xmlTag(xml, "AudioOnly") == "1"
+            MoonToneLog.i("Pairing", "serverinfo: appVersion=$serverAppVersion codecMode=$serverCodecModeSupport audioOnlyMarker=$serverAdvertisesAudioOnly uid=$serverUniqueId")
             xmlTag(xml, "PairStatus") == "1"
         } catch (e: Exception) {
             MoonToneLog.w("Pairing", "serverinfo check failed: ${e.message}")
@@ -292,16 +309,20 @@ class MoonTonePairing(private val crypto: MoonToneCrypto) {
         xmlTag(xml, "ID") ?: throw Exception("No app found in applist: ${xml.take(300)}")
     }
 
-    suspend fun launchSession(host: String) = withContext(Dispatchers.IO) {
+    suspend fun launchSession(host: String, audioOnly: Boolean = false) = withContext(Dispatchers.IO) {
         val appId = discoverDesktopAppId(host)
 
         // Generate random client-side keys for the session
         val clientRiKey = randomBytes(16)
         val clientRiKeyId = SecureRandom().nextInt() and 0x7FFFFFFF
 
+        // audioOnly=1 is only meaningful to the MoonTone-patched Sunshine build;
+        // stock Sunshine ignores it and the client falls back to a dummy video
+        // stream (640x480@1fps) to keep the session alive.
+        val audioOnlyArg = if (audioOnly) "&audioOnly=1" else ""
         val launchQuery =
             "appid=$appId&rikey=${bytesToHex(clientRiKey)}&rikeyid=$clientRiKeyId&surroundAudioInfo=196615" +
-                "&localAudioPlayMode=0&continuousAudio=1"
+                "&localAudioPlayMode=0&continuousAudio=1$audioOnlyArg"
         var resp = launchCmd(host, launchQuery)
 
         // If a previous session hasn't fully exited, tell Sunshine to cancel it and retry.

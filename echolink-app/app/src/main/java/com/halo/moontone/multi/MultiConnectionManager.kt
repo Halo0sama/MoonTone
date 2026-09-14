@@ -17,7 +17,9 @@ data class WorkerSessionParams(
     val codecModeSupport: Int,
     val audioConfig: Int,
     val riKey: ByteArray,
-    val riKeyId: ByteArray
+    val riKeyId: ByteArray,
+    val audioOnly: Boolean = false,
+    val uniqueId: String? = null
 )
 
 /**
@@ -77,6 +79,7 @@ class MultiConnectionManager(
                 putExtra(ConnectionWorkerService.EXTRA_AUDIO_CONFIG, params.audioConfig)
                 putExtra(ConnectionWorkerService.EXTRA_RI_KEY, params.riKey)
                 putExtra(ConnectionWorkerService.EXTRA_RI_KEY_ID, params.riKeyId)
+                putExtra(ConnectionWorkerService.EXTRA_AUDIO_ONLY, params.audioOnly)
                 putExtra(ConnectionWorkerService.EXTRA_SOCKET_NAME, socketName)
             }
             context.startForegroundService(intent)

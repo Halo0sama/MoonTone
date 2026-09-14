@@ -43,6 +43,7 @@ open class ConnectionWorkerService : Service() {
         val audioConfig = intent.getIntExtra(EXTRA_AUDIO_CONFIG, 0)
         val riKey = intent.getByteArrayExtra(EXTRA_RI_KEY) ?: ByteArray(16)
         val riKeyId = intent.getByteArrayExtra(EXTRA_RI_KEY_ID) ?: ByteArray(16)
+        val audioOnly = intent.getBooleanExtra(EXTRA_AUDIO_ONLY, false)
         val socketName = intent.getStringExtra(EXTRA_SOCKET_NAME) ?: run { stopSelf(); return START_NOT_STICKY }
 
         thread {
@@ -63,7 +64,8 @@ open class ConnectionWorkerService : Service() {
                     serverCodecModeSupport = codecMode,
                     audioConfiguration = audioConfig,
                     riAesKey = riKey,
-                    riAesIv = riKeyId
+                    riAesIv = riKeyId,
+                    audioOnly = audioOnly
                 )
             } catch (e: Exception) {
                 MoonToneLog.e("Worker", "worker failed", e)
@@ -122,6 +124,7 @@ open class ConnectionWorkerService : Service() {
         const val EXTRA_AUDIO_CONFIG = "audioConfig"
         const val EXTRA_RI_KEY = "riKey"
         const val EXTRA_RI_KEY_ID = "riKeyId"
+        const val EXTRA_AUDIO_ONLY = "audioOnly"
         const val EXTRA_SOCKET_NAME = "socketName"
     }
 }

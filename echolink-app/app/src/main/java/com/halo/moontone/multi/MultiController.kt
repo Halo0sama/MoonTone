@@ -2,6 +2,7 @@ package com.halo.moontone.multi
 
 import com.halo.moontone.MoonToneApp
 import com.halo.moontone.crypto.MoonToneCrypto
+import com.halo.moontone.data.HostCapabilities
 import com.halo.moontone.log.MoonToneLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -40,10 +41,13 @@ class MultiController(
         onSourceConnected = { slot, _ -> onWorkerConnected(slot) },
         onSourceDisconnected = { slot -> onWorkerDisconnected(slot) }
     )
-    private val launcher = MultiSessionLauncher(crypto)
+    private val launcher = MultiSessionLauncher(app, crypto)
 
     private val states = mutableMapOf<Int, MultiDeviceState>()
     private val retryCounts = mutableMapOf<String, Int>()
+    private val connectedAt = mutableMapOf<String, Long>()
+    private val slotParams = mutableMapOf<Int, WorkerSessionParams>()
+    private val relearnAttempts = mutableSetOf<String>()
     private val _devices = MutableStateFlow<List<MultiDeviceState>>(emptyList())
     val devices: StateFlow<List<MultiDeviceState>> = _devices
 
@@ -63,6 +67,7 @@ class MultiController(
         scope.launch {
             try {
                 val params = launcher.prepare(host)
+                slotParams[slot] = params
                 mixer.start()
                 val ok = manager.startDevice(slot, params)
                 if (!ok) {
@@ -79,6 +84,19 @@ class MultiController(
                     publish()
                 }
             } catch (e: Exception) {
+                // Dummy-video launch against the patched host fails with a 503
+                // (its video probe is intentionally broken). Re-learn the host as
+                // audio-only and retry once.
+                val is503 = e.message?.contains("503") == true
+                if (is503 && HostCapabilities.audioOnly(app, host, null) == false && host !in relearnAttempts) {
+                    relearnAttempts.add(host)
+                    HostCapabilities.setAudioOnly(app, host, slotParams[slot]?.uniqueId, true)
+                    MoonToneLog.i("MultiController", "$host rejected dummy-video launch (503); retrying audio-only")
+                    states.remove(slot)
+                    publish()
+                    connect(host)
+                    return@launch
+                }
                 MoonToneLog.e("MultiController", "connect failed $host", e)
                 states[slot] = states[slot]!!.copy(state = MultiConnState.ERROR, error = e.message)
                 publish()
@@ -90,6 +108,8 @@ class MultiController(
         val s = states[slot]
         if (s != null && s.state == MultiConnState.CONNECTING) {
             retryCounts.remove(s.host)
+            relearnAttempts.remove(s.host)
+            connectedAt[s.host] = System.currentTimeMillis()
             states[slot] = s.copy(state = MultiConnState.CONNECTED)
             publish()
         }
@@ -100,6 +120,19 @@ class MultiController(
         if (s.state != MultiConnState.CONNECTED) return
 
         val host = s.host
+
+        // Stock Sunshine kills audio-only sessions with "Initial Ping Timeout"
+        // ~10s after CONNECTED. Recognize that early-death signature once, mark
+        // the host as requiring the dummy-video fallback, and let the retry
+        // below connect in that mode.
+        val elapsed = System.currentTimeMillis() - (connectedAt[host] ?: 0L)
+        if (elapsed in 0..20_000 && HostCapabilities.audioOnly(app, host, slotParams[slot]?.uniqueId)) {
+            HostCapabilities.setAudioOnly(app, host, slotParams[slot]?.uniqueId, false)
+            MoonToneLog.i("MultiController", "$host kicked shortly after connect; falling back to dummy-video mode")
+        }
+        connectedAt.remove(host)
+        slotParams.remove(slot)
+
         val attempt = retryCounts.getOrDefault(host, 0) + 1
         retryCounts[host] = attempt
 
@@ -123,6 +156,7 @@ class MultiController(
 
     fun disconnect(slot: Int) {
         states[slot]?.host?.let { retryCounts.remove(it) }
+        slotParams.remove(slot)
         manager.stopDevice(slot)
         states.remove(slot)
         publish()
