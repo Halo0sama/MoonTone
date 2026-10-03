@@ -1,17 +1,19 @@
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
     ndkVersion = "27.0.12077973"
-    compileSdk = 34
+    compileSdk = 37
+    buildToolsVersion = "36.0.0"
     namespace = "com.halo.moontone"
 
     defaultConfig {
         applicationId = "com.halo.moontone"
-        minSdk = 21
-        targetSdk = 34
+        // material 1.14（M3 Expressive 窗口主题）与 material3-ripple 1.5 均要求 minSdk ≥ 24
+        minSdk = 24
+        targetSdk = 37
         versionCode = 2
         versionName = "0.2.0"
 
@@ -26,18 +28,11 @@ android {
         buildConfig = true
     }
 
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.8"
-    }
-
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
 
     externalNativeBuild {
         ndkBuild {
@@ -47,17 +42,19 @@ android {
 }
 
 dependencies {
-    // Compose BOM — 2023.10.01 works with compileSdk 34 + AGP 8.5
-    val composeBom = platform("androidx.compose:compose-bom:2023.10.01")
+    // Compose BOM 2026.09.00 + material3 1.5.0-alpha29（Material 3 Expressive）
+    val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material3:material3:1.5.0-alpha29")
     implementation("androidx.compose.foundation:foundation")
-    implementation("androidx.activity:activity-compose:1.8.2")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
+    implementation("androidx.activity:activity-compose:1.13.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
     implementation("androidx.core:core-ktx:1.12.0")
+    // M3 Expressive 窗口主题（Theme.Material3Expressive）
+    implementation("com.google.android.material:material:1.14.0")
 
     // Moonlight crypto
     implementation("org.bouncycastle:bcprov-jdk18on:1.77")
