@@ -1,114 +1,32 @@
-# MoonTone
+# MoonTone Android 工程
 
-**Wireless Windows system audio → Android phone**
+项目功能与使用说明见[根目录 README](../README.md)，当前开发入口见[开发指南](../docs/DEVELOPMENT.md)。目录名 `echolink-app` 是历史名称，应用包名为 `com.halo.moontone`。
 
-MoonTone captures your PC's system audio and streams it to your Android phone over WiFi with ultra-low latency. Built on the battle-tested [Moonlight](https://github.com/moonlight-stream)/[Sunshine](https://github.com/LizardByte/Sunshine) audio pipeline.
+## 构建
 
-## Architecture
-
-```
-Windows PC (Sunshine)              Android Phone (MoonTone)
-─────────────────────              ───────────────────────
-WASAPI Loopback Capture            Compose UI (Salt UI style)
-    │                                  │
-Opus Multistream Encoder           EchoConnectionManager
-    │                                  │
-RTP/UDP :48000 ──── WiFi ────→    moonlight-common-c (C)
-(Opus audio packets)               │ Opus Decode → PCM
-                                   │ ├─ AudioTrack playback
-                                   │ └─ FFT visualizer (WIP)
-                                   └─ MediaSession notification
-```
-
-## Prerequisites
-
-### On Windows
-- [Sunshine](https://github.com/LizardByte/Sunshine/releases) installed and running
-- Sunshine configured to capture system audio (WASAPI)
-
-### For Development
-- Android Studio Hedgehog (2023.1) or later
-- Android SDK 34
-- NDK 27.0.12077973
-- JDK 17
-
-## Build
+使用 JDK 21、Android SDK 37、Build Tools 36.0.0、NDK 27.0.12077973。Gradle Wrapper 和原生依赖已随仓库保存。
 
 ```bash
-# Generate Gradle wrapper (if not present)
-gradle wrapper --gradle-version 8.7
-
-# Build APK
-./gradlew assembleDebug
-
-# Output: app/build/outputs/apk/debug/app-debug.apk
+./gradlew :app:assembleDebug
+./gradlew :app:testDebugUnitTest :app:lintDebug
+# 连接 arm64 Android 模拟器或设备后，运行实际 LocalSocket/生命周期测试
+ANDROID_SERIAL=emulator-5556 ./gradlew :app:connectedDebugAndroidTest
 ```
 
-## Usage
+`local.properties` 可配置 `sdk.dir`，也可以使用 `ANDROID_HOME`。当前只构建 arm64-v8a，最低 Android 7.0 / API 24。
 
-1. Install Sunshine on your Windows PC
-2. Start Sunshine and configure audio settings in its web UI (http://localhost:47990)
-3. Build and install EchoLink APK on your Android phone
-4. Open EchoLink, enter your PC's IP address, tap "Connect"
-5. PC system audio will stream to your phone
+Debug APK：`app/build/outputs/apk/debug/app-debug.apk`。Release 构建命令为 `./gradlew :app:assembleRelease`，签名由发布者配置；仓库不包含发布密钥。
 
-## Project Structure
+## 代码入口
 
-```
-echolink-app/
-├── app/
-│   ├── src/main/
-│   │   ├── java/com/
-│   │   │   ├── halo/moontone/           # Our code
-│   │   │   │   ├── MoonToneApp.kt         # Application
-│   │   │   │   ├── audio/
-│   │   │   │   │   └── MoonToneAudioService.kt # Foreground service
-│   │   │   │   ├── connection/
-│   │   │   │   │   ├── MoonToneConnection.kt    # MoonBridge wrapper
-│   │   │   │   │   └── SunshineClient.kt        # Pairing/launch HTTP
-│   │   │   │   └── ui/
-│   │   │   │       └── MainActivity.kt          # Compose UI
-│   │   │   └── limelight/               # Adapted Moonlight code
-│   │   │       ├── LimeLog.java
-│   │   │       ├── binding/audio/
-│   │   │       │   └── AndroidAudioRenderer.java  # AudioTrack playback
-│   │   │       └── nvstream/
-│   │   │           ├── NvConnectionListener.java
-│   │   │           ├── av/audio/AudioRenderer.java
-│   │   │           ├── av/video/VideoDecoderRenderer.java
-│   │   │           └── jni/MoonBridge.java
-│   │   ├── jni/                         # Native C layer
-│   │   │   └── moonlight-core/
-│   │   │       ├── callbacks.c          # JNI callbacks (audio + video)
-│   │   │       ├── moonlight-common-c/  # RTSP/RTP/Opus core
-│   │   │       ├── libopus/             # Opus codec (prebuilt .a)
-│   │   │       └── openssl/             # OpenSSL (prebuilt .a)
-│   │   ├── res/
-│   │   └── AndroidManifest.xml
-│   └── build.gradle.kts
-├── build.gradle.kts
-├── settings.gradle.kts
-└── gradle.properties
-```
+- `MoonToneApp.kt`：应用级控制器、播放服务所有权、Worker 进程隔离。
+- `control/MoonToneController.kt`：单路配对与播放、麦克风服务、调试状态。
+- `connection/MoonTonePairing.kt`：PIN 配对、mTLS、Sunshine 会话启动。
+- `connection/MoonToneConnection.kt`：串行管理进程内唯一的 native 连接。
+- `multi/MultiController.kt`：多路会话监督、取消、超时、三次重连。
+- `multi/MultiConnectionManager.kt`：Worker 槽位、LocalSocket 生命周期。
+- `multi/AudioMixer.kt` / `StereoDriftBuffer.kt`：PCM 接收、立体声漂移补偿、混音。
+- `audio/MoonToneMicrophoneService.kt`：麦克风前台服务。
+- `ui/MainActivity.kt`：Compose 界面、运行时权限和设备列表。
 
-## Technical Notes
-
-### Audio Pipeline
-- **Server**: Sunshine captures WASAPI loopback → Opus 48kHz encode → RTP/UDP
-- **Client**: moonlight-common-c receives RTP → FEC recovery → Opus decode → PCM
-- **Playback**: Android `AudioTrack` with `PERFORMANCE_MODE_LOW_LATENCY`
-- **Latency**: ~10ms Opus encode + ~10ms network + ~10ms AudioTrack buffer
-
-### Why 1x1 Video?
-The Moonlight protocol requires both video and audio streams. We request 1x1 video resolution to minimize encoding overhead while the protocol negotiates happily. The dummy `VideoDecoderRenderer` discards all video frames instantly.
-
-### FFT Visualizer (Planned)
-PCM data is available after Opus decode. A future update will run FFT on this data to drive a real-time spectrum visualizer in the Compose UI.
-
-## License
-
-This project incorporates code from:
-- [Moonlight Android](https://github.com/moonlight-stream/moonlight-android) (GPL-3.0)
-- [moonlight-common-c](https://github.com/moonlight-stream/moonlight-common-c) (GPL-3.0)
-
-MoonTone is licensed under GPL-3.0.
+单路播放和多路混音是两条现有管线，自动延迟控制目前接在单路播放器上。不要把源码中的缓冲参数直接当作实测端到端延迟。

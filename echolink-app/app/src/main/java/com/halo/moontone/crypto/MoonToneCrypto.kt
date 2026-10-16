@@ -24,6 +24,33 @@ import java.util.*
 
 class MoonToneCrypto(context: Context) {
 
+    private val serverCertificates = File(context.filesDir, "server-certificates")
+
+    private fun serverCertificateFile(host: String): File {
+        val name = MessageDigest.getInstance("SHA-256").digest(host.trim().toByteArray())
+            .joinToString("") { "%02x".format(it) }
+        return File(serverCertificates, "$name.crt")
+    }
+
+    fun getServerCertificate(host: String): X509Certificate? = synchronized(globalCryptoLock) {
+        val file = serverCertificateFile(host)
+        if (!file.exists()) return@synchronized null
+        file.inputStream().use { CertificateFactory.getInstance("X.509").generateCertificate(it) as X509Certificate }
+    }
+
+    fun rememberServerCertificate(host: String, certificate: X509Certificate) = synchronized(globalCryptoLock) {
+        serverCertificates.mkdirs()
+        val file = android.util.AtomicFile(serverCertificateFile(host))
+        val output = file.startWrite()
+        try {
+            output.write(certificate.encoded)
+            file.finishWrite(output)
+        } catch (e: Exception) {
+            file.failWrite(output)
+            throw e
+        }
+    }
+
     private val certFile = File(context.filesDir, "moontone_client_v2.crt")
     private val keyFile = File(context.filesDir, "moontone_client_v2.key")
 

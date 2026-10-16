@@ -1,8 +1,12 @@
 package com.halo.moontone.audio
 
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import androidx.core.content.ContextCompat
 import com.halo.moontone.log.MoonToneLog
 import com.limelight.nvstream.jni.MoonBridge
 import java.net.DatagramPacket
@@ -10,152 +14,98 @@ import java.net.DatagramSocket
 import java.net.InetAddress
 import java.nio.ByteBuffer
 
-/**
- * Minimal microphone uplink for MoonTone.
- *
- * Captures 48 kHz mono PCM from the device mic, encodes it with the bundled
- * Opus encoder (single-stream, 64 kbps VoIP), wraps each frame as
- * [4-byte big-endian sequence][opus frame], and sends it over UDP to the PC.
- *
- * This is intentionally transport-simple; the MicYou-based design will later
- * replace/augment it with jitter buffering, FEC and better latency control.
- */
-class MoonToneMicCapture(private val host: String, private val port: Int = 48100) {
-
+/** Captures 48kHz mono PCM and sends [MTUP][seq][timestamp][ssrc][Opus] over UDP. */
+class MoonToneMicCapture(private val context: Context, private val host: String, private val port: Int = 48100) {
     companion object {
-        private const val TAG = "MicCapture"
         private const val SAMPLE_RATE = 48000
-        private const val FRAME_SIZE = 480 // 10 ms
-        private const val BITRATE = 64000
+        private const val FRAME_SIZE = 480
     }
 
-    @Volatile
-    var isRunning: Boolean = false
-        private set
+    private class Session(val record: AudioRecord, val socket: DatagramSocket, val encoder: Long) {
+        @Volatile var running = true
+        var thread: Thread? = null
+    }
 
-    private var encoder: Long = 0L
-    private var audioRecord: AudioRecord? = null
-    private var socket: DatagramSocket? = null
-    private var thread: Thread? = null
-    private var sequence = 0
-    private val ssrc = (System.currentTimeMillis() and 0xFFFFFFFFL).toInt()
+    @Volatile private var session: Session? = null
+    val isRunning: Boolean get() = session?.running == true
 
-    private val magic = byteArrayOf(
-        'M'.code.toByte(), 'T'.code.toByte(), 'U'.code.toByte(), 'P'.code.toByte()
-    )
-
+    @Synchronized
     fun start(): Boolean {
         if (isRunning) return true
-        val minBuf = AudioRecord.getMinBufferSize(
-            SAMPLE_RATE,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT
-        )
-        if (minBuf <= 0) {
-            MoonToneLog.e(TAG, "AudioRecord min buffer invalid: $minBuf")
-            return false
-        }
-
-        encoder = MoonBridge.opusEncoderCreate(SAMPLE_RATE, 1, BITRATE)
-        if (encoder == 0L) {
-            MoonToneLog.e(TAG, "Failed to create Opus encoder")
-            return false
-        }
-
-        val record = try {
-            AudioRecord(
-                MediaRecorder.AudioSource.MIC,
-                SAMPLE_RATE,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                maxOf(minBuf, FRAME_SIZE * 2 * 4)
-            )
+        if (host.isBlank() || port !in 1..65535 ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
+        ) return false
+        var encoder = 0L
+        var record: AudioRecord? = null
+        var socket: DatagramSocket? = null
+        try {
+            val address = InetAddress.getByName(host)
+            val minBuffer = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+            if (minBuffer <= 0) return false
+            encoder = MoonBridge.opusEncoderCreate(SAMPLE_RATE, 1, 64000)
+            if (encoder == 0L) return false
+            record = AudioRecord(MediaRecorder.AudioSource.MIC, SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuffer, FRAME_SIZE * 2 * 4))
+            check(record.state == AudioRecord.STATE_INITIALIZED) { "Microphone unavailable" }
+            socket = DatagramSocket()
+            record.startRecording()
+            val active = Session(record, socket, encoder)
+            session = active
+            active.thread = Thread({ loop(active, address) }, "moontone-mic").also { it.start() }
+            return true
+        } catch (e: SecurityException) {
+            MoonToneLog.w("MicCapture", "microphone permission unavailable", e)
         } catch (e: Exception) {
-            MoonToneLog.e(TAG, "AudioRecord create failed", e)
-            MoonBridge.opusEncoderDestroy(encoder)
-            encoder = 0L
-            return false
+            MoonToneLog.e("MicCapture", "microphone start failed", e)
         }
-        if (record.state != AudioRecord.STATE_INITIALIZED) {
-            MoonToneLog.e(TAG, "AudioRecord not initialized (state=${record.state})")
-            record.release()
-            MoonBridge.opusEncoderDestroy(encoder)
-            encoder = 0L
-            return false
-        }
-
-        audioRecord = record
-        socket = DatagramSocket()
-        isRunning = true
-        sequence = 0
-        thread = Thread({ loop() }, "moontone-mic").also { it.start() }
-        MoonToneLog.i(TAG, "mic capture started -> $host:$port")
-        return true
+        try { record?.release() } catch (_: Exception) {}
+        socket?.close()
+        if (encoder != 0L) MoonBridge.opusEncoderDestroy(encoder)
+        return false
     }
 
-    private fun loop() {
-        val record = audioRecord ?: return
-        val sock = socket ?: return
+    private fun loop(active: Session, address: InetAddress) {
         val pcm = ShortArray(FRAME_SIZE)
-        val out = ByteArray(1500)
-        val packetBuf = ByteBuffer.allocate(20 + out.size)
-
+        val encoded = ByteArray(1500)
+        val packet = ByteBuffer.allocate(20 + encoded.size)
+        val ssrc = java.security.SecureRandom().nextInt()
+        var sequence = 0
+        var filled = 0
         try {
-            record.startRecording()
+            while (active.running) {
+                val n = active.record.read(pcm, filled, FRAME_SIZE - filled, AudioRecord.READ_BLOCKING)
+                if (n <= 0) break
+                filled += n
+                if (filled < FRAME_SIZE) continue
+                filled = 0
+                val length = MoonBridge.opusEncoderEncode(active.encoder, pcm, FRAME_SIZE, encoded)
+                if (length <= 0) continue
+                packet.clear()
+                packet.putInt(0x4D545550) // MTUP
+                packet.putInt(sequence++)
+                packet.putLong(System.currentTimeMillis())
+                packet.putInt(ssrc)
+                packet.put(encoded, 0, length)
+                active.socket.send(DatagramPacket(packet.array(), 20 + length, address, port))
+            }
         } catch (e: Exception) {
-            MoonToneLog.e(TAG, "startRecording failed", e)
-            isRunning = false
-            return
+            if (active.running) MoonToneLog.e("MicCapture", "capture stopped", e)
+        } finally {
+            active.running = false
+            try { active.record.stop() } catch (_: Exception) {}
+            active.record.release()
+            active.socket.close()
+            // Only the encoding thread frees its encoder, after the last native call.
+            MoonBridge.opusEncoderDestroy(active.encoder)
         }
-
-        while (isRunning) {
-            val n = try {
-                record.read(pcm, 0, FRAME_SIZE, AudioRecord.READ_BLOCKING)
-            } catch (e: Exception) {
-                MoonToneLog.w(TAG, "read failed", e)
-                break
-            }
-            if (n <= 0) continue
-
-            val len = MoonBridge.opusEncoderEncode(encoder, pcm, FRAME_SIZE, out)
-            if (len > 0) {
-                packetBuf.clear()
-                packetBuf.put(magic)
-                packetBuf.putInt(sequence++)
-                packetBuf.putLong(System.currentTimeMillis())
-                packetBuf.putInt(ssrc)
-                packetBuf.put(out, 0, len)
-                val data = packetBuf.array().copyOf(20 + len)
-                try {
-                    sock.send(DatagramPacket(data, data.size, InetAddress.getByName(host), port))
-                } catch (e: Exception) {
-                    MoonToneLog.w(TAG, "udp send failed: ${e.message}")
-                }
-            }
-        }
-
-        try {
-            record.stop()
-        } catch (ignored: Exception) {}
-        isRunning = false
     }
 
     fun stop() {
-        isRunning = false
-        thread?.join(500)
-        thread = null
-        try {
-            audioRecord?.release()
-        } catch (ignored: Exception) {}
-        audioRecord = null
-        try {
-            socket?.close()
-        } catch (ignored: Exception) {}
-        socket = null
-        if (encoder != 0L) {
-            MoonBridge.opusEncoderDestroy(encoder)
-            encoder = 0L
-        }
-        MoonToneLog.i(TAG, "mic capture stopped")
+        val active = synchronized(this) { session.also { session = null } } ?: return
+        active.running = false
+        active.socket.close()
+        try { active.record.stop() } catch (_: Exception) {}
+        active.thread?.interrupt()
+        try { active.thread?.join(500) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
     }
 }

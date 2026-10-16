@@ -4,8 +4,7 @@ import android.content.Intent
 import androidx.core.content.ContextCompat
 import com.halo.moontone.MoonToneApp
 import com.halo.moontone.audio.AdaptiveLatencyController
-import com.halo.moontone.audio.MoonToneAudioService
-import com.halo.moontone.audio.MoonToneMicCapture
+import com.halo.moontone.audio.MoonToneMicrophoneService
 import com.halo.moontone.audio.StreamKeepAlive
 import com.halo.moontone.connection.MoonToneConnection
 import com.halo.moontone.connection.MoonToneState
@@ -25,6 +24,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 
 /**
@@ -61,11 +63,22 @@ class MoonToneController(private val app: MoonToneApp) {
     val muted = MutableStateFlow(false)
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val launchMutex = Mutex()
+    private val sessionLock = Any()
+    private val connectGeneration = java.util.concurrent.atomic.AtomicLong()
+    @Volatile private var activeSessionGeneration = 0L
 
     init {
         // When the connection terminates remotely (or locally), release all
         // per-session resources so a later reconnect starts clean.
-        connection.onTerminated = { cleanupSession() }
+        connection.onTerminated = {
+            val generation = activeSessionGeneration
+            scope.launch {
+                synchronized(sessionLock) {
+                    if (activeSessionGeneration == generation) cleanupSession()
+                }
+            }
+        }
     }
 
     fun generatePin(): String = MoonTonePairing.generatePin()
@@ -75,12 +88,18 @@ class MoonToneController(private val app: MoonToneApp) {
         return pairing.isPaired(host)
     }
 
-    /** Blocking pairing flow (blocks until the PIN is entered on the host). */
+    @Volatile private var pairingJob: Job? = null
+
+    /** Suspends until the PIN is entered; cancellation closes the pending HTTP call. */
     suspend fun startPairing(host: String, pin: String) {
+        val job = kotlinx.coroutines.currentCoroutineContext()[Job]
+        pairingJob?.cancel()
+        pairingJob = job
         currentHost = host
         pairingPin = pin
-        pairing.startPairing(host, pin)
-        pairingPin = null
+        try { pairing.startPairing(host, pin) } finally {
+            if (pairingJob === job) { pairingPin = null; pairingJob = null }
+        }
     }
 
     /**
@@ -93,10 +112,22 @@ class MoonToneController(private val app: MoonToneApp) {
      * session is retried once in dummy-video mode.
      */
     suspend fun launchAndConnect(host: String, allowFallback: Boolean = true) {
+        val generation = connectGeneration.incrementAndGet()
+        fallbackJob?.cancel()
+        launchMutex.withLock { launchAndConnectInternal(host, allowFallback, generation) }
+    }
+
+    private suspend fun launchAndConnectInternal(host: String, allowFallback: Boolean, generation: Long) {
+        fun checkCurrent() {
+            if (connectGeneration.get() != generation) throw CancellationException("Connection cancelled")
+        }
+        checkCurrent()
+        val pairing = MoonTonePairing(crypto)
         currentHost = host
         connection.clearError()
         MoonToneLog.i(TAG, "launchSession($host)")
-        pairing.refreshServerInfo(host)
+        check(pairing.refreshServerInfo(host)) { "无法获取服务器信息，请检查连接与配对" }
+        checkCurrent()
         val uid = pairing.serverUniqueId
         val useAudioOnly = pairing.serverAdvertisesAudioOnly ||
             HostCapabilities.audioOnly(app, host, uid)
@@ -109,37 +140,61 @@ class MoonToneController(private val app: MoonToneApp) {
             if (!useAudioOnly && allowFallback && e.message?.contains("503") == true) {
                 HostCapabilities.setAudioOnly(app, host, uid, true)
                 MoonToneLog.i(TAG, "$host rejected dummy-video launch (503); retrying audio-only")
-                cleanupSession()
-                return launchAndConnect(host, allowFallback = false)
+                checkCurrent()
+                return launchAndConnectInternal(host, allowFallback = false, generation = generation)
             }
             throw e
         }
-        SavedHosts.add(app, "Mac", host)
+        checkCurrent()
+        SavedHosts.add(app, host, host)
 
-        val renderer = AndroidAudioRenderer(app, false)
-        audioRenderer = renderer
-        connection.setAudioRenderer(renderer)
-        latency = AdaptiveLatencyController(renderer, scope).also { it.start() }
-        connection.connect(
-            address = host,
-            appVersion = pairing.serverAppVersion,
-            gfeVersion = pairing.serverGfeVersion,
-            rtspSessionUrl = pairing.rtspUrl,
-            serverCodecModeSupport = pairing.serverCodecModeSupport,
-            audioConfiguration = MoonBridge.AUDIO_CONFIGURATION_STEREO.toInt(),
-            riAesKey = pairing.riKey,
-            riAesIv = pairing.riKeyId,
-            audioOnly = useAudioOnly
-        )
-        // Supervise only after connect() has switched the state to CONNECTING,
-        // otherwise the watcher below can observe the stale DISCONNECTED state
-        // and exit before the session even starts.
-        if (allowFallback) {
-            superviseEarlyDeath(host, useAudioOnly)
+        startPipeline(host, pairing, generation, pairing.rtspUrl, pairing.riKey, pairing.riKeyId, useAudioOnly, allowFallback)
+    }
+
+    suspend fun connectManually(host: String, rtspUrl: String, key: ByteArray, iv: ByteArray) {
+        val generation = connectGeneration.incrementAndGet()
+        fallbackJob?.cancel()
+        launchMutex.withLock {
+            val details = MoonTonePairing(crypto)
+            check(details.refreshServerInfo(host)) { "无法获取服务器信息，请检查连接与配对" }
+            if (connectGeneration.get() != generation) throw CancellationException("Connection cancelled")
+            currentHost = host
+            val audioOnly = details.serverAdvertisesAudioOnly || HostCapabilities.audioOnly(app, host, details.serverUniqueId)
+            startPipeline(host, details, generation, rtspUrl, key, iv, audioOnly, false)
+            SavedHosts.add(app, host, host)
         }
-        startAudioService()
-        keepAlive.acquire()
-        MoonToneLog.i(TAG, "connection thread started, state=${connection.state.value}")
+    }
+
+    private fun startPipeline(
+        host: String, details: MoonTonePairing, generation: Long, rtspUrl: String,
+        key: ByteArray, iv: ByteArray, audioOnly: Boolean, allowFallback: Boolean
+    ) {
+        require(key.size == 16 && iv.size == 16) { "串流密钥和 IV 必须为 16 字节" }
+        synchronized(sessionLock) {
+            if (connectGeneration.get() != generation) throw CancellationException("Connection cancelled")
+            cleanupSession()
+            activeSessionGeneration = generation
+            try {
+                startAudioService()
+                keepAlive.acquire()
+                val renderer = AndroidAudioRenderer(app, false)
+                audioRenderer = renderer
+                connection.setAudioRenderer(renderer)
+                connection.connect(
+                    address = host, appVersion = details.serverAppVersion,
+                    gfeVersion = details.serverGfeVersion, rtspSessionUrl = rtspUrl,
+                    serverCodecModeSupport = details.serverCodecModeSupport,
+                    audioConfiguration = MoonBridge.AUDIO_CONFIGURATION_STEREO.toInt(),
+                    riAesKey = key, riAesIv = iv, audioOnly = audioOnly
+                )
+                latency = AdaptiveLatencyController(renderer, scope).also { it.start() }
+                if (allowFallback) superviseEarlyDeath(host, details.serverUniqueId, audioOnly, generation)
+            } catch (e: Exception) {
+                cleanupSession()
+                connection.disconnect()
+                throw e
+            }
+        }
     }
 
     /**
@@ -149,14 +204,13 @@ class MoonToneController(private val app: MoonToneApp) {
      * in dummy-video mode.
      */
     private var fallbackJob: Job? = null
-    private fun superviseEarlyDeath(host: String, useAudioOnly: Boolean) {
+    private fun superviseEarlyDeath(host: String, uid: String?, useAudioOnly: Boolean, generation: Long) {
         fallbackJob?.cancel()
         if (!useAudioOnly) return
         fallbackJob = scope.launch {
-            val uid = pairing.serverUniqueId
             val startedAt = System.currentTimeMillis()
             var connectedSeen = false
-            while (isActive) {
+            while (isActive && connectGeneration.get() == generation) {
                 when (connection.state.value) {
                     MoonToneState.CONNECTED -> connectedSeen = true
                     MoonToneState.DISCONNECTED, MoonToneState.ERROR -> {
@@ -169,8 +223,18 @@ class MoonToneController(private val app: MoonToneApp) {
                             if (diedEarly && HostCapabilities.audioOnly(app, host, uid)) {
                                 HostCapabilities.setAudioOnly(app, host, uid, false)
                                 MoonToneLog.i(TAG, "$host does not support audio-only; retrying with dummy video")
-                                cleanupSession()
-                                launchAndConnect(host, allowFallback = false)
+                                launchMutex.withLock {
+                                    if (connectGeneration.get() == generation) {
+                                        try {
+                                            launchAndConnectInternal(host, allowFallback = false, generation = generation)
+                                        } catch (e: CancellationException) {
+                                            throw e
+                                        } catch (e: Exception) {
+                                            connection.setError("重连失败：${e.message}")
+                                            MoonToneLog.e(TAG, "fallback failed", e)
+                                        }
+                                    }
+                                }
                             }
                             return@launch
                         }
@@ -191,12 +255,13 @@ class MoonToneController(private val app: MoonToneApp) {
         connection.clearError()
         val pin = generatePin()
         pairingPin = pin
-        MoonToneLog.i(TAG, "pairAsync($host) pin=$pin")
+        MoonToneLog.i(TAG, "pairAsync($host)")
         scope.launch {
             try {
-                pairing.startPairing(host, pin)
-                pairingPin = null
+                startPairing(host, pin)
                 MoonToneLog.i(TAG, "Pairing completed for $host")
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 pairingPin = null
                 connection.setError("Pairing failed: ${e.message}")
@@ -217,6 +282,8 @@ class MoonToneController(private val app: MoonToneApp) {
             scope.launch {
                 try {
                     launchAndConnect(host)
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     connection.setError("Connect failed: ${e.message}")
                     MoonToneLog.e(TAG, "connectAsync failed", e)
@@ -229,18 +296,27 @@ class MoonToneController(private val app: MoonToneApp) {
     }
 
     fun disconnect() {
-        MoonToneLog.i(TAG, "disconnect()")
-        cleanupSession()
-        connection.disconnect()
-        app.stopService(Intent(app, MoonToneAudioService::class.java))
+        synchronized(sessionLock) {
+            connectGeneration.incrementAndGet()
+            pairingJob?.cancel()
+            pairingJob = null
+            pairingPin = null
+            fallbackJob?.cancel()
+            fallbackJob = null
+            cleanupSession()
+            connection.disconnect()
+        }
     }
 
     private fun cleanupSession() {
+        activeSessionGeneration = 0
         latency?.stop()
         latency = null
         audioRenderer = null
         muted.value = false
         keepAlive.release()
+        micStop()
+        app.stopPlayback("single")
     }
 
     fun setMuted(muted: Boolean) {
@@ -251,30 +327,30 @@ class MoonToneController(private val app: MoonToneApp) {
 
     // ── Microphone uplink (MVP) ─────────────────────────────
 
-    private var mic: MoonToneMicCapture? = null
+    val micRunning = MutableStateFlow(false)
 
     fun micStart(host: String, port: Int = 48100): Boolean {
-        mic?.stop()
-        val capture = MoonToneMicCapture(host, port)
-        val ok = capture.start()
-        if (ok) mic = capture
-        return ok
+        if (host.isBlank() || port !in 1..65535 || ContextCompat.checkSelfPermission(app,
+                android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) return false
+        return try {
+            ContextCompat.startForegroundService(app, Intent(app, MoonToneMicrophoneService::class.java)
+                .putExtra("host", host).putExtra("port", port))
+            true
+        } catch (e: Exception) {
+            MoonToneLog.e(TAG, "microphone service unavailable", e)
+            false
+        }
     }
 
     fun micStop() {
-        mic?.stop()
-        mic = null
+        app.stopService(Intent(app, MoonToneMicrophoneService::class.java))
+        micRunning.value = false
     }
 
-    fun micStatus(): Boolean = mic?.isRunning == true
+    fun micStatus(): Boolean = micRunning.value
 
     private fun startAudioService() {
-        ContextCompat.startForegroundService(
-            app,
-            Intent(app, MoonToneAudioService::class.java).apply {
-                action = MoonToneAudioService.ACTION_START
-            }
-        )
+        app.startPlayback("single")
     }
 
     fun statusJson(): JSONObject = JSONObject().apply {
@@ -287,8 +363,8 @@ class MoonToneController(private val app: MoonToneApp) {
         put("paired", try { runBlocking { if (currentHost.isBlank()) false else pairing.isPaired(currentHost) } } catch (e: Exception) { false })
         put("audioThresholdMs", latency?.currentThresholdMs ?: 0)
         put("audioPendingMs", latency?.lastPendingMs ?: 0)
-        put("audioDropsPerSec", "%.1f".format(latency?.lastDropsPerSec ?: 0.0).toDouble())
-        put("audioUnderrunsPerSec", "%.1f".format(latency?.lastUnderrunsPerSec ?: 0.0).toDouble())
+        put("audioDropsPerSec", "%.1f".format(java.util.Locale.US, latency?.lastDropsPerSec ?: 0.0).toDouble())
+        put("audioUnderrunsPerSec", "%.1f".format(java.util.Locale.US, latency?.lastUnderrunsPerSec ?: 0.0).toDouble())
     }
 
     fun logTail(count: Int = 100): String = MoonToneLog.tail(count)

@@ -19,6 +19,7 @@ object SavedHosts {
     private const val PREFS = "moontone_hosts"
     private const val KEY = "hosts"
 
+    @Synchronized
     fun load(context: Context): List<SavedHost> {
         val json = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString(KEY, "[]") ?: "[]"
@@ -30,12 +31,13 @@ object SavedHosts {
                     name = o.optString("name", o.optString("host")),
                     host = o.optString("host")
                 )
-            }
+            }.filter { it.host.isNotBlank() }.distinctBy { it.host }
         } catch (e: Exception) {
             emptyList()
         }
     }
 
+    @Synchronized
     fun save(context: Context, hosts: List<SavedHost>) {
         val arr = JSONArray()
         hosts.forEach { h ->
@@ -45,11 +47,17 @@ object SavedHosts {
             .edit().putString(KEY, arr.toString()).apply()
     }
 
+    @Synchronized
     fun add(context: Context, name: String, host: String) {
-        val current = load(context).filter { it.host != host }
-        save(context, current + SavedHost(name, host))
+        val target = host.trim()
+        if (target.isEmpty()) return
+        val current = load(context)
+        val existing = current.firstOrNull { it.host == target }
+        val displayName = if (name.isBlank() || name == target) existing?.name ?: target else name
+        save(context, current.filterNot { it.host == target } + SavedHost(displayName, target))
     }
 
+    @Synchronized
     fun remove(context: Context, host: String) {
         save(context, load(context).filter { it.host != host })
     }

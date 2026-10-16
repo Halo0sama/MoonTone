@@ -3,99 +3,110 @@ package com.halo.moontone.data
 import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.net.wifi.WifiManager
+import android.os.Handler
+import android.os.Looper
 import com.halo.moontone.log.MoonToneLog
 
-data class DiscoveredHost(
-    val name: String,
-    val host: String,
-    val port: Int = 47989
-)
+data class DiscoveredHost(val name: String, val host: String, val port: Int = 47989)
 
-/**
- * LAN discovery for Sunshine hosts using Android NsdManager.
- * Sunshine advertises `_nvstream._tcp`, the same service Moonlight uses.
- */
+/** Serializes legacy NSD resolves and delivers all UI callbacks on the main thread. */
 class DeviceDiscovery(
     private val context: Context,
+    private val onDeviceLost: (DiscoveredHost) -> Unit = {},
     private val onDeviceFound: (DiscoveredHost) -> Unit
 ) {
-    companion object {
-        private const val TAG = "Discovery"
-        private const val SERVICE_TYPE = "_nvstream._tcp"
-    }
-
-    private var nsdManager: NsdManager? = null
+    private val handler = Handler(Looper.getMainLooper())
+    private var manager: NsdManager? = null
     private var listener: NsdManager.DiscoveryListener? = null
     private val seen = mutableSetOf<String>()
+    private val resolved = mutableMapOf<String, DiscoveredHost>()
+    private val pending = ArrayDeque<NsdServiceInfo>()
+    private var resolving = false
+    private var generation = 0L
+    private var multicast: WifiManager.MulticastLock? = null
+
+    private fun dispatch(token: Long, action: () -> Unit) {
+        handler.post { if (token == generation && listener != null) action() }
+    }
 
     fun start() {
         if (listener != null) return
-        nsdManager = context.getSystemService(Context.NSD_SERVICE) as NsdManager
-        val l = object : NsdManager.DiscoveryListener {
-            override fun onDiscoveryStarted(serviceType: String) {
-                MoonToneLog.i(TAG, "mDNS discovery started: $serviceType")
+        if (android.os.Build.VERSION.SDK_INT >= 37 && androidx.core.content.ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.ACCESS_LOCAL_NETWORK) != android.content.pm.PackageManager.PERMISSION_GRANTED) return
+        val token = ++generation
+        val nsd = context.getSystemService(Context.NSD_SERVICE) as NsdManager
+        manager = nsd
+        val callback = object : NsdManager.DiscoveryListener {
+            override fun onDiscoveryStarted(type: String) { MoonToneLog.i("Discovery", "mDNS started") }
+            override fun onServiceFound(info: NsdServiceInfo) = dispatch(token) {
+                if (seen.add(info.serviceName)) { pending.addLast(info); resolveNext(token) }
             }
-
-            override fun onServiceFound(info: NsdServiceInfo) {
-                val name = info.serviceName ?: return
-                if (!seen.add(name)) return
-                MoonToneLog.i(TAG, "found: $name")
-                resolve(info)
-            }
-
-            override fun onServiceLost(info: NsdServiceInfo) {
+            override fun onServiceLost(info: NsdServiceInfo) = dispatch(token) {
                 seen.remove(info.serviceName)
+                pending.removeAll { it.serviceName == info.serviceName }
+                resolved.remove(info.serviceName)?.let(onDeviceLost)
             }
-
-            override fun onDiscoveryStopped(serviceType: String) {
-                MoonToneLog.i(TAG, "mDNS discovery stopped")
+            override fun onDiscoveryStopped(type: String) {}
+            override fun onStartDiscoveryFailed(type: String, error: Int) = dispatch(token) {
+                MoonToneLog.w("Discovery", "start failed: $error")
+                stop()
             }
-
-            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
-                MoonToneLog.e(TAG, "start discovery failed: $errorCode")
-            }
-
-            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
-                MoonToneLog.e(TAG, "stop discovery failed: $errorCode")
-            }
+            override fun onStopDiscoveryFailed(type: String, error: Int) { MoonToneLog.w("Discovery", "stop failed: $error") }
         }
-        listener = l
+        listener = callback
         try {
-            nsdManager?.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, l)
+            if (android.os.Build.VERSION.SDK_INT <= 32) {
+                val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                multicast = wifi.createMulticastLock("MoonTone:Discovery").apply { setReferenceCounted(false); acquire() }
+            }
+            nsd.discoverServices("_nvstream._tcp", NsdManager.PROTOCOL_DNS_SD, callback)
         } catch (e: Exception) {
-            MoonToneLog.e(TAG, "discoverServices failed", e)
+            MoonToneLog.e("Discovery", "start failed", e)
+            stop()
         }
     }
 
-    private fun resolve(info: NsdServiceInfo) {
-        val mgr = nsdManager ?: return
+    private fun resolveNext(token: Long) {
+        if (resolving || pending.isEmpty()) return
+        val nsd = manager ?: return
+        val next = pending.removeFirst()
+        resolving = true
         try {
-            mgr.resolveService(info, object : NsdManager.ResolveListener {
-                override fun onResolveFailed(info: NsdServiceInfo, errorCode: Int) {
-                    MoonToneLog.w(TAG, "resolve failed: $errorCode")
+            nsd.resolveService(next, object : NsdManager.ResolveListener {
+                override fun onResolveFailed(info: NsdServiceInfo, error: Int) = dispatch(token) {
+                    seen.remove(info.serviceName)
+                    resolving = false
+                    resolveNext(token)
                 }
-
-                override fun onServiceResolved(info: NsdServiceInfo) {
-                    val host = info.host?.hostAddress ?: return
-                    MoonToneLog.i(TAG, "resolved: ${info.serviceName} -> $host:${info.port}")
-                    onDeviceFound(DiscoveredHost(info.serviceName ?: host, host, info.port))
+                override fun onServiceResolved(info: NsdServiceInfo) = dispatch(token) {
+                    val address = info.host?.hostAddress
+                    if (address != null && info.serviceName in seen) {
+                        val host = DiscoveredHost(info.serviceName, address, info.port)
+                        resolved[info.serviceName] = host
+                        onDeviceFound(host)
+                    }
+                    resolving = false
+                    resolveNext(token)
                 }
             })
         } catch (e: Exception) {
-            MoonToneLog.e(TAG, "resolveService failed", e)
+            seen.remove(next.serviceName)
+            resolving = false
+            resolveNext(token)
         }
     }
 
     fun stop() {
-        listener?.let { l ->
-            try {
-                nsdManager?.stopServiceDiscovery(l)
-            } catch (e: Exception) {
-                MoonToneLog.w(TAG, "stop discovery error: ${e.message}")
-            }
-        }
+        generation++
+        listener?.let { try { manager?.stopServiceDiscovery(it) } catch (_: Exception) {} }
         listener = null
-        nsdManager = null
+        manager = null
+        pending.clear()
         seen.clear()
+        resolved.clear()
+        resolving = false
+        try { multicast?.release() } catch (_: Exception) {}
+        multicast = null
     }
 }

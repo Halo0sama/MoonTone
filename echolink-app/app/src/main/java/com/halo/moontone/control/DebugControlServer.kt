@@ -67,10 +67,11 @@ class DebugControlServer(private val controller: MoonToneController) {
     private fun handleClient(client: Socket) {
         try {
             client.use { s ->
+                s.soTimeout = 5_000
                 val reader = BufferedReader(InputStreamReader(s.getInputStream()))
                 val writer = PrintWriter(s.getOutputStream(), true)
                 val line = reader.readLine() ?: return
-                MoonToneLog.d(TAG, "CMD: ${line.take(500)}")
+                MoonToneLog.d(TAG, "CMD: ${runCatching { JSONObject(line).optString("cmd") }.getOrDefault("invalid")}")
                 val response = try {
                     handleCommand(JSONObject(line))
                 } catch (e: Exception) {

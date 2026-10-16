@@ -20,8 +20,9 @@ class SocketAudioRenderer(private val output: OutputStream) : AudioRenderer {
         sampleRate: Int,
         samplesPerFrame: Int
     ): Int {
-        // All workers use the same 48k/2ch PCM format; the main mixer handles it.
-        return 0
+        return if (sampleRate == PcmProtocol.SAMPLE_RATE &&
+            audioConfiguration.channelCount == PcmProtocol.CHANNELS
+        ) 0 else -1
     }
 
     override fun start() {

@@ -38,11 +38,13 @@
   - 为每台设备分配一个空闲 slot
   - 在主进程完成 HTTP pairing/launch，拿到 RTSP/密钥
   - 启动对应 Worker Service 并传入连接参数
-  - 监听 Worker 状态与 PCM
+  - 启动前预留槽位；取消时 shutdown/close 监听器和连接
+  - 收到第一帧合法 PCM 后确认连接；立即 EOF/超时进入有界重试
 - `AudioMixer`：
   - 每路一个 `PcmSource`（LocalSocket 读取线程）
   - 统一 48kHz / 2ch / 16bit
-  - 混音：`sum(clip(a+b))`
+  - 混音：宽精度累加后按当前有效音源数归一化，再裁剪至 16bit
+  - 时钟漂移修正以完整左右声道采样对为单位
   - 写 `AudioTrack`
 
 ## 控制协议（主进程 ↔ Worker）
@@ -51,13 +53,8 @@
 - Worker 启动后连接 `LocalSocket`，然后开始 `MoonToneConnection`。
 - Worker → 主进程 PCM 帧格式：
   - `[magic 4B "MTPC"][seq 4B BE][sampleRate 4B BE][channels 4B BE][pcmLength 4B BE][pcm bytes]`
-- Worker → 主进程状态消息（通过同一个 socket 或单独控制 socket）：
-  - JSON 行：`{"type":"state","state":"CONNECTED"}`
+- 当前 socket 只传二进制 PCM 帧，不混入 JSON 状态行；连接状态由首帧、EOF 与超时驱动。
 
-## 里程碑
-1. ✅ 架构文档
-2. 多进程 Worker Service 骨架（2 路先验证）
-3. PCM LocalSocket 传输 + AudioMixer
-4. MultiConnectionManager 接入现有配对/启动逻辑
-5. UI 多设备同时控制面板
-6. 稳定性/保活/异常恢复
+## 当前状态
+
+32 路 Worker、应用级控制器、混音、独立静音/音量和自动重连已接入界面。详见 [开发记录与验证边界](DEVELOPMENT.md)。本轮的 Android 测试验证 LocalSocket 与生命周期；32 路同时播放和真实端到端延迟仍需多主机实测。

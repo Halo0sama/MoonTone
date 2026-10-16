@@ -8,7 +8,6 @@ import android.content.Intent
 import android.net.LocalSocket
 import android.net.LocalSocketAddress
 import android.os.IBinder
-import com.halo.moontone.R
 import com.halo.moontone.connection.MoonToneConnection
 import com.halo.moontone.log.MoonToneLog
 import kotlin.concurrent.thread
@@ -24,6 +23,8 @@ open class ConnectionWorkerService : Service() {
 
     private var connection: MoonToneConnection? = null
     private var socket: LocalSocket? = null
+    private val lifecycleLock = Any()
+    @Volatile private var generation = 0L
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -46,30 +47,39 @@ open class ConnectionWorkerService : Service() {
         val audioOnly = intent.getBooleanExtra(EXTRA_AUDIO_ONLY, false)
         val socketName = intent.getStringExtra(EXTRA_SOCKET_NAME) ?: run { stopSelf(); return START_NOT_STICKY }
 
-        thread {
+        val attempt = synchronized(lifecycleLock) { ++generation }
+        thread(name = "moontone-worker-connect") {
             try {
                 val local = LocalSocket()
                 local.connect(LocalSocketAddress(socketName))
-                socket = local
-
                 val renderer = SocketAudioRenderer(local.outputStream)
                 val conn = MoonToneConnection(applicationContext)
                 conn.setAudioRenderer(renderer)
-                connection = conn
-                conn.connect(
-                    address = host,
-                    appVersion = appVersion,
-                    gfeVersion = gfeVersion,
-                    rtspSessionUrl = rtspUrl,
-                    serverCodecModeSupport = codecMode,
-                    audioConfiguration = audioConfig,
-                    riAesKey = riKey,
-                    riAesIv = riKeyId,
-                    audioOnly = audioOnly
-                )
+                synchronized(lifecycleLock) {
+                    if (generation != attempt) {
+                        local.close()
+                        return@thread
+                    }
+                    socket?.close()
+                    connection?.disconnect()
+                    socket = local
+                    connection = conn
+                    conn.onTerminated = { if (generation == attempt) stopSelf(startId) }
+                    conn.connect(
+                        address = host,
+                        appVersion = appVersion,
+                        gfeVersion = gfeVersion,
+                        rtspSessionUrl = rtspUrl,
+                        serverCodecModeSupport = codecMode,
+                        audioConfiguration = audioConfig,
+                        riAesKey = riKey,
+                        riAesIv = riKeyId,
+                        audioOnly = audioOnly
+                    )
+                }
             } catch (e: Exception) {
                 MoonToneLog.e("Worker", "worker failed", e)
-                stopSelf()
+                synchronized(lifecycleLock) { if (generation == attempt) stopSelf(startId) }
             }
         }
 
@@ -77,16 +87,13 @@ open class ConnectionWorkerService : Service() {
     }
 
     override fun onDestroy() {
-        try {
-            connection?.disconnect()
-        } catch (e: Exception) {
+        val resources = synchronized(lifecycleLock) {
+            generation++
+            (socket to connection).also { socket = null; connection = null }
         }
-        connection = null
-        try {
-            socket?.close()
-        } catch (e: Exception) {
-        }
-        socket = null
+        // Close PCM first to unblock a native writer before joining its shutdown.
+        try { resources.first?.close() } catch (_: Exception) {}
+        resources.second?.disconnect()
         super.onDestroy()
     }
 

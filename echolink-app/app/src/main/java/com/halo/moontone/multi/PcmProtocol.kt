@@ -4,6 +4,7 @@ import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.InputStream
 import java.io.OutputStream
+import java.io.IOException
 
 /**
  * Wire protocol between a ConnectionWorker process and the main process.
@@ -21,8 +22,11 @@ object PcmProtocol {
     const val MAGIC_BYTES = 0x4D545043 // "MTPC" as BE int
     const val SAMPLE_RATE = 48000
     const val CHANNELS = 2
+    // Opus supports at most 120ms per packet. Reject corrupt headers before allocating.
+    const val MAX_PCM_BYTES = SAMPLE_RATE * CHANNELS * 2 * 120 / 1000
 
     fun writeFrame(out: OutputStream, seq: Int, pcm: ShortArray) {
+        require(pcm.isNotEmpty() && pcm.size % CHANNELS == 0 && pcm.size * 2 <= MAX_PCM_BYTES)
         val dos = DataOutputStream(out)
         dos.writeInt(MAGIC_BYTES)
         dos.writeInt(seq)
@@ -41,17 +45,18 @@ object PcmProtocol {
     /** Returns null when the stream ends. */
     fun readFrame(input: InputStream): ShortArray? {
         val dis = DataInputStream(input)
-        val magic = try {
-            dis.readInt()
-        } catch (e: Exception) {
-            return null
-        }
-        if (magic != MAGIC_BYTES) return null
-        val seq = dis.readInt()
+        val first = dis.read()
+        if (first == -1) return null
+        val magic = (first shl 24) or (dis.readUnsignedByte() shl 16) or
+            (dis.readUnsignedByte() shl 8) or dis.readUnsignedByte()
+        if (magic != MAGIC_BYTES) throw IOException("Invalid PCM magic")
+        dis.readInt() // sequence
         val rate = dis.readInt()
         val channels = dis.readInt()
         val length = dis.readInt()
-        if (length <= 0 || length > 1024 * 1024) return null
+        if (rate != SAMPLE_RATE || channels != CHANNELS || length <= 0 ||
+            length > MAX_PCM_BYTES || length % (CHANNELS * 2) != 0
+        ) throw IOException("Unsupported PCM frame: rate=$rate channels=$channels length=$length")
         val bytes = ByteArray(length)
         dis.readFully(bytes)
         val samples = ShortArray(length / 2)

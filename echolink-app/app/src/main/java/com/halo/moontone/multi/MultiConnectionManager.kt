@@ -8,20 +8,6 @@ import com.halo.moontone.log.MoonToneLog
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.concurrent.thread
 
-/** Connection parameters for one worker process. */
-data class WorkerSessionParams(
-    val host: String,
-    val rtspUrl: String,
-    val appVersion: String,
-    val gfeVersion: String?,
-    val codecModeSupport: Int,
-    val audioConfig: Int,
-    val riKey: ByteArray,
-    val riKeyId: ByteArray,
-    val audioOnly: Boolean = false,
-    val uniqueId: String? = null
-)
-
 /**
  * Main-process manager for multiple ConnectionWorker processes.
  *
@@ -31,80 +17,130 @@ data class WorkerSessionParams(
  */
 class MultiConnectionManager(
     private val context: Context,
-    private val mixer: AudioMixer,
-    private val onSourceConnected: (Int, PcmSource) -> Unit = { _, _ -> },
-    private val onSourceDisconnected: (Int) -> Unit = {}
+    private val mixer: AudioMixer
 ) {
-    private data class Slot(
-        val server: LocalServerSocket,
-        val source: PcmSource
-    )
+    private class Slot(val server: LocalServerSocket) {
+        var client: LocalSocket? = null
+        var source: PcmSource? = null
+        var gain: Float = 1f
+    }
 
     private val slots = ConcurrentHashMap<Int, Slot>()
-    private var nextSocketId = 0
 
-    /** Starts a worker in the given slot (1..N). Returns false if slot busy. */
-    fun startDevice(slot: Int, params: WorkerSessionParams): Boolean {
-        if (slots.containsKey(slot)) return false
+    /** Reserve the slot before accept(), so cancellation also closes a pending listener. */
+    fun startDevice(
+        slot: Int,
+        params: WorkerSessionParams,
+        gain: Float = 1f,
+        onConnected: () -> Unit = {},
+        onDisconnected: () -> Unit = {}
+    ): Boolean {
+        val cls = workerClass(slot)
+        val socketName = "moontone_worker_${slot}_${java.util.UUID.randomUUID()}"
+        val entry = try {
+            Slot(LocalServerSocket(socketName)).apply { this.gain = gain }
+        } catch (e: Exception) {
+            MoonToneLog.e("MultiManager", "socket creation failed slot=$slot", e)
+            return false
+        }
+        if (slots.putIfAbsent(slot, entry) != null) {
+            entry.server.close()
+            return false
+        }
 
-        return try {
-            val socketName = "moontone_worker_${slot}_${nextSocketId++}"
-            val server = LocalServerSocket(socketName)
-
-            // Accept the worker's PCM connection in the background.
-            thread {
+        try {
+            synchronized(entry) {
+                if (slots[slot] !== entry) return false
+                val intent = Intent(context, cls).apply {
+                    putExtra(ConnectionWorkerService.EXTRA_HOST, params.host)
+                    putExtra(ConnectionWorkerService.EXTRA_RTSP_URL, params.rtspUrl)
+                    putExtra(ConnectionWorkerService.EXTRA_APP_VERSION, params.appVersion)
+                    putExtra(ConnectionWorkerService.EXTRA_GFE_VERSION, params.gfeVersion)
+                    putExtra(ConnectionWorkerService.EXTRA_CODEC_MODE, params.codecModeSupport)
+                    putExtra(ConnectionWorkerService.EXTRA_AUDIO_CONFIG, params.audioConfig)
+                    putExtra(ConnectionWorkerService.EXTRA_RI_KEY, params.riKey)
+                    putExtra(ConnectionWorkerService.EXTRA_RI_KEY_ID, params.riKeyId)
+                    putExtra(ConnectionWorkerService.EXTRA_AUDIO_ONLY, params.audioOnly)
+                    putExtra(ConnectionWorkerService.EXTRA_SOCKET_NAME, socketName)
+                }
+                androidx.core.content.ContextCompat.startForegroundService(context, intent)
+            }
+            thread(name = "moontone-accept-$slot") {
                 try {
-                    val client: LocalSocket = server.accept()
-                    val source = mixer.addSource(client.inputStream)
-                    source.onDisconnected = { onSourceDisconnected(slot) }
-                    slots[slot] = Slot(server, source)
-                    onSourceConnected(slot, source)
+                    val client = entry.server.accept()
+                    synchronized(entry) {
+                        if (slots[slot] !== entry) {
+                            client.close()
+                            return@thread
+                        }
+                        entry.client = client
+                        val source = PcmSource(client.inputStream)
+                        source.volume = entry.gain
+                        source.onFirstFrame = { if (slots[slot] === entry) onConnected() }
+                        source.onDisconnected = {
+                            if (slots.remove(slot, entry)) {
+                                dispose(entry)
+                                onDisconnected()
+                            }
+                        }
+                        entry.source = source
+                        mixer.addSource(source)
+                        // The first valid PCM packet establishes CONNECTED.
+                        // A socket alone only means that the Worker has started.
+                        source.start()
+                        closeServer(entry)
+                    }
                     MoonToneLog.i("MultiManager", "slot $slot connected: ${params.host}")
                 } catch (e: Exception) {
-                    MoonToneLog.e("MultiManager", "accept failed slot=$slot", e)
-                    try {
-                        server.close()
-                    } catch (ignored: Exception) {
+                    if (slots.remove(slot, entry)) {
+                        dispose(entry)
+                        MoonToneLog.e("MultiManager", "accept failed slot=$slot", e)
+                        onDisconnected()
                     }
-                    slots.remove(slot)
                 }
             }
-
-            val intent = Intent(context, workerClass(slot)).apply {
-                putExtra(ConnectionWorkerService.EXTRA_HOST, params.host)
-                putExtra(ConnectionWorkerService.EXTRA_RTSP_URL, params.rtspUrl)
-                putExtra(ConnectionWorkerService.EXTRA_APP_VERSION, params.appVersion)
-                putExtra(ConnectionWorkerService.EXTRA_GFE_VERSION, params.gfeVersion)
-                putExtra(ConnectionWorkerService.EXTRA_CODEC_MODE, params.codecModeSupport)
-                putExtra(ConnectionWorkerService.EXTRA_AUDIO_CONFIG, params.audioConfig)
-                putExtra(ConnectionWorkerService.EXTRA_RI_KEY, params.riKey)
-                putExtra(ConnectionWorkerService.EXTRA_RI_KEY_ID, params.riKeyId)
-                putExtra(ConnectionWorkerService.EXTRA_AUDIO_ONLY, params.audioOnly)
-                putExtra(ConnectionWorkerService.EXTRA_SOCKET_NAME, socketName)
-            }
-            context.startForegroundService(intent)
             MoonToneLog.i("MultiManager", "started slot $slot for ${params.host}")
-            true
+            return true
         } catch (e: Exception) {
-            MoonToneLog.e("MultiManager", "startDevice failed", e)
-            false
+            slots.remove(slot, entry)
+            dispose(entry)
+            context.stopService(Intent(context, cls))
+            MoonToneLog.e("MultiManager", "startDevice failed slot=$slot", e)
+            return false
         }
     }
 
-    fun sourceFor(slot: Int): PcmSource? = slots[slot]?.source
+    fun sourceFor(slot: Int): PcmSource? = slots[slot]?.let { synchronized(it) { it.source } }
 
-    fun stopDevice(slot: Int) {
-        val s = slots.remove(slot)
-        if (s != null) {
-            mixer.removeSource(s.source)
-            try {
-                s.server.close()
-            } catch (e: Exception) {
+    fun setGain(slot: Int, gain: Float) {
+        slots[slot]?.let { entry ->
+            synchronized(entry) {
+                entry.gain = gain
+                entry.source?.volume = gain
             }
         }
-        val cls = workerClass(slot)
-        context.stopService(Intent(context, cls))
-        MoonToneLog.i("MultiManager", "stopped slot $slot")
+    }
+
+    fun stopDevice(slot: Int) {
+        slots.remove(slot)?.let { dispose(it) }
+        context.stopService(Intent(context, workerClass(slot)))
+    }
+
+    private fun dispose(entry: Slot) = synchronized(entry) {
+        closeServer(entry)
+        try { entry.client?.shutdownInput() } catch (_: Exception) {}
+        try { entry.client?.shutdownOutput() } catch (_: Exception) {}
+        entry.source?.let { mixer.removeSource(it) }
+        entry.source = null
+        try { entry.client?.close() } catch (_: Exception) {}
+        entry.client = null
+    }
+
+    private fun closeServer(entry: Slot) {
+        // close() alone does not wake a blocking accept() on Android/Linux;
+        // shutdown releases that kernel reference before closing the descriptor.
+        try { android.system.Os.shutdown(entry.server.fileDescriptor, android.system.OsConstants.SHUT_RDWR) } catch (_: Exception) {}
+        try { entry.server.close() } catch (_: Exception) {}
     }
 
     fun stopAll() {

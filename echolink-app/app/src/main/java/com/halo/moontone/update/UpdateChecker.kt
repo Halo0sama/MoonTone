@@ -2,6 +2,7 @@ package com.halo.moontone.update
 
 import com.halo.moontone.log.MoonToneLog
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -51,26 +52,43 @@ object UpdateChecker {
                     url = json.optString("html_url")
                 ).takeIf { it.tagName.isNotBlank() }
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             MoonToneLog.w(TAG, "update check failed: ${e.message}")
             null
         }
     }
 
-    /**
-     * Compare a release tag like "v0.2.1" against the installed versionName
-     * like "0.2.0-alpha". Only the numeric segments are compared; prefixes
-     * and suffixes are ignored. Equal versions are not newer.
-     */
+    /** Compare numeric versions and SemVer prereleases; malformed tags are ignored. */
     fun isNewer(remoteTag: String, currentVersion: String): Boolean {
-        fun core(s: String) = Regex("\\d+").findAll(s).map { it.value.toInt() }.toList()
-        val remote = core(remoteTag)
-        val current = core(currentVersion)
-        for (i in 0 until maxOf(remote.size, current.size)) {
-            val r = remote.getOrElse(i) { 0 }
-            val c = current.getOrElse(i) { 0 }
-            if (r != c) return r > c
+        data class Version(val core: List<java.math.BigInteger>, val pre: List<String>?)
+        fun parse(value: String): Version? {
+            val match = Regex("""^[vV]?(\d+(?:\.\d+)*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z.-]+)?$""")
+                .matchEntire(value.trim()) ?: return null
+            return Version(match.groupValues[1].split('.').map { it.toBigInteger() },
+                match.groups[2]?.value?.split('.'))
         }
-        return false
+        val remote = parse(remoteTag) ?: return false
+        val current = parse(currentVersion) ?: return false
+        for (i in 0 until maxOf(remote.core.size, current.core.size)) {
+            val comparison = remote.core.getOrElse(i) { java.math.BigInteger.ZERO }
+                .compareTo(current.core.getOrElse(i) { java.math.BigInteger.ZERO })
+            if (comparison != 0) return comparison > 0
+        }
+        val r = remote.pre ?: return current.pre != null
+        val c = current.pre ?: return false
+        for (i in 0 until minOf(r.size, c.size)) {
+            if (r[i] == c[i]) continue
+            val rn = r[i].toBigIntegerOrNull()
+            val cn = c[i].toBigIntegerOrNull()
+            return when {
+                rn != null && cn != null -> rn > cn
+                rn != null -> false
+                cn != null -> true
+                else -> r[i] > c[i]
+            }
+        }
+        return r.size > c.size
     }
 }

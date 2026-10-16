@@ -28,6 +28,10 @@ class MoonToneAudioService : Service() {
                 isStreaming = true
             }
             ACTION_STOP -> {
+                val app = application as MoonToneApp
+                app.controller.disconnect()
+                app.controller.micStop()
+                app.multiController.stopAll()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
                 isStreaming = false
@@ -37,7 +41,8 @@ class MoonToneAudioService : Service() {
                 isStreaming = true
             }
         }
-        return START_STICKY
+        // Session keys live in memory; a sticky restart cannot restore a stream.
+        return START_NOT_STICKY
     }
 
     private fun startStreamingNotification() {
@@ -55,10 +60,10 @@ class MoonToneAudioService : Service() {
 
         val notification = NotificationCompat.Builder(this, MoonToneApp.CHANNEL_PLAYBACK)
             .setContentTitle("MoonTone")
-            .setContentText("Streaming audio from PC")
+            .setContentText("正在播放电脑音频")
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentIntent(pendingIntent)
-            .addAction(android.R.drawable.ic_media_pause, "Disconnect", stopIntent)
+            .addAction(android.R.drawable.ic_media_pause, "断开全部", stopIntent)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()

@@ -62,8 +62,6 @@ def main():
     p.add_argument("-p", "--port", type=int, default=48100)
     sub.add_parser("micstop")
     sub.add_parser("micstatus")
-    p = sub.add_parser("audiomode")
-    p.add_argument("mode", choices=["LATENCY", "BALANCED", "QUALITY"])
     p = sub.add_parser("logs")
     p.add_argument("-n", "--lines", type=int, default=150)
     sub.add_parser("cert")
@@ -85,8 +83,6 @@ def main():
         r = send({"cmd": "micstop"})
     elif args.cmd == "micstatus":
         r = send({"cmd": "micstatus"})
-    elif args.cmd == "audiomode":
-        r = send({"cmd": "audiomode", "mode": args.mode})
     elif args.cmd == "logs":
         r = send({"cmd": "logs", "lines": args.lines})
     elif args.cmd == "cert":

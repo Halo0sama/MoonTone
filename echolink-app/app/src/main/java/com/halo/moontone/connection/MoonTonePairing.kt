@@ -1,6 +1,7 @@
 package com.halo.moontone.connection
 
 import com.halo.moontone.crypto.MoonToneCrypto
+import com.halo.moontone.crypto.ServerCertificateTrust
 import com.halo.moontone.log.MoonToneLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -39,12 +40,6 @@ class MoonTonePairing(private val crypto: MoonToneCrypto) {
     private val clientCert: X509Certificate by lazy { crypto.getClientCertificate()!! }
     private val clientKey: PrivateKey by lazy { crypto.getClientPrivateKey()!! }
 
-    private val trustAllCerts: X509TrustManager = object : X509TrustManager {
-        override fun checkClientTrusted(c: Array<out X509Certificate>?, a: String?) {}
-        override fun checkServerTrusted(c: Array<out X509Certificate>?, a: String?) {}
-        override fun getAcceptedIssuers() = arrayOf<X509Certificate>()
-    }
-
     /**
      * Build a BRAND-NEW SSLContext for every HTTPS request.
      *
@@ -54,7 +49,7 @@ class MoonTonePairing(private val crypto: MoonToneCrypto) {
      * Sunshine closes each HTTPS response connection anyway, so there is no
      * keep-alive benefit to a shared context.
      */
-    private fun buildSslContext(): SSLContext {
+    private fun buildSslContext(trust: X509TrustManager): SSLContext {
         val km = object : X509KeyManager {
             override fun chooseClientAlias(kts: Array<out String>?, iss: Array<out Principal>?, s: java.net.Socket?) = "MoonTone-RSA"
             override fun chooseServerAlias(kt: String?, iss: Array<out Principal>?, s: java.net.Socket?) = null as String?
@@ -64,15 +59,15 @@ class MoonTonePairing(private val crypto: MoonToneCrypto) {
             override fun getServerAliases(kt: String?, iss: Array<out Principal>?) = null as Array<String>?
         }
         return SSLContext.getInstance("TLS").apply {
-            init(arrayOf<KeyManager>(km), arrayOf<TrustManager>(trustAllCerts), SecureRandom())
+            init(arrayOf<KeyManager>(km), arrayOf<TrustManager>(trust), SecureRandom())
         }
     }
 
-    private fun buildHttpsClient(noTimeout: Boolean): OkHttpClient {
+    private fun buildHttpsClient(trust: ServerCertificateTrust, noTimeout: Boolean): OkHttpClient {
         return OkHttpClient.Builder()
             .connectTimeout(5, TimeUnit.SECONDS)
             .readTimeout(if (noTimeout) 0 else 7, if (noTimeout) TimeUnit.MILLISECONDS else TimeUnit.SECONDS)
-            .sslSocketFactory(buildSslContext().socketFactory, trustAllCerts)
+            .sslSocketFactory(buildSslContext(trust).socketFactory, trust)
             .hostnameVerifier { _, _ -> true }
             .proxy(Proxy.NO_PROXY)
             .build()
@@ -149,19 +144,32 @@ class MoonTonePairing(private val crypto: MoonToneCrypto) {
 
     // ── HTTP(S) requests ──────────────────────────────────
 
-    private fun requestGet(client: OkHttpClient, url: String): String {
-        MoonToneLog.d("Pairing", "GET ${url.substringBefore("&clientcert=").substringBefore("&salt=")}")
-        val req = Request.Builder().url(url).header("Connection", "close").get().build()
-        val resp = client.newCall(req).execute()
-        val body = resp.body?.string() ?: throw Exception("Empty response")
-        resp.close()
-        MoonToneLog.d("Pairing", "HTTP ${resp.code}: ${body.take(200).replace("\n", " ")}")
-        if (!resp.isSuccessful) throw Exception("HTTP ${resp.code}: ${body.take(300)}")
-        return body
-    }
+    private suspend fun requestGet(client: OkHttpClient, url: String): String =
+        kotlinx.coroutines.suspendCancellableCoroutine { continuation ->
+            val req = Request.Builder().url(url).header("Connection", "close").get().build()
+            MoonToneLog.d("Pairing", "GET ${req.url.scheme}://${req.url.host}:${req.url.port}${req.url.encodedPath}")
+            val call = client.newCall(req)
+            continuation.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : okhttp3.Callback {
+                override fun onFailure(call: okhttp3.Call, e: IOException) {
+                    continuation.resumeWith(Result.failure(e))
+                }
+                override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                    val result = runCatching {
+                        response.use { resp ->
+                            val body = resp.body?.string() ?: throw IOException("Empty response")
+                            MoonToneLog.d("Pairing", "HTTP ${resp.code} (${body.length} characters)")
+                            if (!resp.isSuccessful) throw IOException("HTTP ${resp.code}")
+                            body
+                        }
+                    }
+                    continuation.resumeWith(result)
+                }
+            })
+        }
 
     // Plain HTTP 47989 — used for the pairing protocol (see class comment)
-    private fun httpGet(host: String, path: String, query: String, noTimeout: Boolean = false): String {
+    private suspend fun httpGet(host: String, path: String, query: String, noTimeout: Boolean = false): String {
         val sep = if (query.isEmpty()) "" else "&"
         val client = if (noTimeout) httpClientNoReadTimeout else httpClient
         return requestGet(client, "http://$host:47989/$path?$query${sep}uniqueid=$sessionUniqueId&uuid=${UUID.randomUUID()}")
@@ -171,11 +179,19 @@ class MoonTonePairing(private val crypto: MoonToneCrypto) {
     // A NEW OkHttp client + SSLContext is built per call (see buildSslContext),
     // and the connection is forcibly torn down afterwards so the next request
     // never races Sunshine's single-threaded HTTPS accept loop.
-    private fun httpsGet(host: String, path: String, query: String, noTimeout: Boolean = false): String {
+    private suspend fun httpsGet(host: String, path: String, query: String, noTimeout: Boolean = false): String {
         val sep = if (query.isEmpty()) "" else "&"
-        val client = buildHttpsClient(noTimeout)
+        val trust = ServerCertificateTrust(crypto.getServerCertificate(host))
+        val client = buildHttpsClient(trust, noTimeout)
         return try {
-            requestGet(client, "https://$host:47984/$path?$query${sep}uniqueid=$sessionUniqueId&uuid=${UUID.randomUUID()}")
+            val body = requestGet(client, "https://$host:47984/$path?$query${sep}uniqueid=$sessionUniqueId&uuid=${UUID.randomUUID()}")
+            if (crypto.getServerCertificate(host) == null) {
+                // OkHttp's cleaned chain may be empty for a self-signed TOFU
+                // handshake. Save the leaf actually checked by our trust manager.
+                val peer = trust.peerCertificate ?: throw java.security.cert.CertificateException("Missing TLS peer certificate")
+                crypto.rememberServerCertificate(host, peer)
+            }
+            body
         } finally {
             try { client.connectionPool.evictAll() } catch (ignored: Exception) {}
             try { client.dispatcher.executorService.shutdown() } catch (ignored: Exception) {}
@@ -228,6 +244,8 @@ class MoonTonePairing(private val crypto: MoonToneCrypto) {
             serverAdvertisesAudioOnly = xmlTag(xml, "AudioOnly") == "1"
             MoonToneLog.i("Pairing", "serverinfo: appVersion=$serverAppVersion codecMode=$serverCodecModeSupport audioOnlyMarker=$serverAdvertisesAudioOnly uid=$serverUniqueId")
             xmlTag(xml, "PairStatus") == "1"
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             MoonToneLog.w("Pairing", "serverinfo check failed: ${e.message}")
             false
@@ -280,6 +298,7 @@ class MoonTonePairing(private val crypto: MoonToneCrypto) {
         val cps = concat(clientSecret, sign(clientSecret, clientKey))
         val finResp = pairCmd(host, "clientpairingsecret=${bytesToHex(cps)}")
         check(xmlTag(finResp, "paired") == "1") { "Final step failed: ${finResp.take(200)}" }
+        crypto.rememberServerCertificate(host, serverCert)
 
         // Finalize pairing with a challenge over HTTPS (required to complete pairing
         // and to verify that Sunshine has added our cert to its TLS trust chain)
@@ -333,7 +352,7 @@ class MoonTonePairing(private val crypto: MoonToneCrypto) {
             } catch (e: Exception) {
                 MoonToneLog.w("Pairing", "cancel request failed: ${e.message}")
             }
-            Thread.sleep(1000)
+            kotlinx.coroutines.delay(1000)
             resp = launchCmd(host, launchQuery)
         }
 

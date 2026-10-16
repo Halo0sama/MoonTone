@@ -2,19 +2,19 @@ package com.halo.moontone.ui
 
 import android.Manifest
 import android.app.AlertDialog
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.IBinder
 import androidx.activity.ComponentActivity
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -40,26 +40,23 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import com.halo.moontone.MoonToneApp
 import com.halo.moontone.BuildConfig
-import com.halo.moontone.audio.MoonToneAudioService
 import com.halo.moontone.connection.MoonToneState
 import com.halo.moontone.control.MoonToneController
 import com.halo.moontone.data.DeviceDiscovery
 import com.halo.moontone.data.DiscoveredHost
-import com.halo.moontone.data.HostCapabilities
 import com.halo.moontone.data.SavedHost
 import com.halo.moontone.data.SavedHosts
 import com.halo.moontone.log.MoonToneLog
 import com.halo.moontone.multi.MultiConnState
-import com.halo.moontone.multi.MultiController
 import com.halo.moontone.update.UpdateChecker
 import com.halo.moontone.ui.theme.MoonToneTheme
-import com.limelight.binding.audio.AndroidAudioRenderer
-import com.limelight.nvstream.jni.MoonBridge
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -74,27 +71,15 @@ private data class DeviceEntry(
 class MainActivity : ComponentActivity() {
 
     private lateinit var controller: MoonToneController
-    private var audioService: MoonToneAudioService? = null
-    private var serviceBound = false
-
-    private val serviceConnection = object : ServiceConnection {
-        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
-            audioService = (service as MoonToneAudioService.LocalBinder).service
-            serviceBound = true
-        }
-        override fun onServiceDisconnected(name: ComponentName?) {
-            audioService = null; serviceBound = false
-        }
-    }
-
     /**
      * Queries GitHub for the latest release and pops a dialog when it is
      * newer than the installed version. Best-effort by design: network
      * failures, rate limits and "no releases yet" all silently no-op.
      */
     private fun checkForAppUpdate() {
-        CoroutineScope(Dispatchers.Main).launch {
+        lifecycleScope.launch {
             val release = UpdateChecker.fetchLatest() ?: return@launch
+            if (isFinishing || isDestroyed) return@launch
             if (!UpdateChecker.isNewer(release.tagName, BuildConfig.VERSION_NAME)) {
                 MoonToneLog.i("Update", "already on latest (${BuildConfig.VERSION_NAME}, release ${release.tagName})")
                 return@launch
@@ -115,7 +100,24 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private val permLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    var localNetworkGranted by mutableStateOf(Build.VERSION.SDK_INT < 37)
+        private set
+
+    private fun hasLocalNetworkPermission() = Build.VERSION.SDK_INT < 37 ||
+        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_LOCAL_NETWORK) == PackageManager.PERMISSION_GRANTED
+
+    private val permLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        localNetworkGranted = hasLocalNetworkPermission()
+    }
+
+    fun requestLocalNetworkPermission() {
+        if (Build.VERSION.SDK_INT >= 37) permLauncher.launch(arrayOf(Manifest.permission.ACCESS_LOCAL_NETWORK))
+    }
+
+    override fun onResume() {
+        super.onResume()
+        localNetworkGranted = hasLocalNetworkPermission()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -140,49 +142,28 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             window.isStatusBarContrastEnforced = false
         }
-        WindowInsetsControllerCompat(window, window.decorView).apply {
-            isAppearanceLightStatusBars = true
-            isAppearanceLightNavigationBars = true
-        }
 
         controller = (application as MoonToneApp).controller
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
-                != PackageManager.PERMISSION_GRANTED
-            ) permLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        localNetworkGranted = hasLocalNetworkPermission()
+        val permissions = buildList {
+            if (Build.VERSION.SDK_INT >= 37 && !localNetworkGranted) add(Manifest.permission.ACCESS_LOCAL_NETWORK)
+            if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+                add(Manifest.permission.POST_NOTIFICATIONS)
         }
+        if (permissions.isNotEmpty()) permLauncher.launch(permissions.toTypedArray())
         setContent {
             MoonToneTheme {
-                MoonToneUI(controller, this)
+                MoonToneUI(controller, this, localNetworkGranted)
             }
         }
     }
 
-    override fun onDestroy() {
-        // The controller (and therefore the stream) survives activity destruction
-        // so the debug CLI and the foreground service can keep operating.
-        if (serviceBound) unbindService(serviceConnection)
-        super.onDestroy()
-    }
 
-    fun startAudioService() {
-        ContextCompat.startForegroundService(
-            this, Intent(this, MoonToneAudioService::class.java).apply {
-                action = MoonToneAudioService.ACTION_START
-            }
-        )
-        bindService(Intent(this, MoonToneAudioService::class.java), serviceConnection, Context.BIND_AUTO_CREATE)
-    }
-
-    fun stopAudioService() {
-        if (serviceBound) { unbindService(serviceConnection); serviceBound = false }
-        stopService(Intent(this, MoonToneAudioService::class.java))
-    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MoonToneUI(controller: MoonToneController, activity: MainActivity) {
+fun MoonToneUI(controller: MoonToneController, activity: MainActivity, localNetworkGranted: Boolean) {
     val connection = controller.connection
     val state by connection.state.collectAsState()
     val stageMessage by connection.stageMessage.collectAsState()
@@ -190,7 +171,7 @@ fun MoonToneUI(controller: MoonToneController, activity: MainActivity) {
     val muted by controller.muted.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val multiController = remember { MultiController(context.applicationContext as MoonToneApp, controller.crypto) }
+    val multiController = (context.applicationContext as MoonToneApp).multiController
     val multiDevices by multiController.devices.collectAsState()
 
     var host by remember { mutableStateOf("192.168.") }
@@ -206,35 +187,42 @@ fun MoonToneUI(controller: MoonToneController, activity: MainActivity) {
     var showCertInfo by remember { mutableStateOf(false) }
     var moonToneCert by remember { mutableStateOf("") }
     var showLogs by remember { mutableStateOf(false) }
-    var micEnabled by remember { mutableStateOf(false) }
+    val micEnabled by controller.micRunning.collectAsState()
+    val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) controller.micStart(controller.currentHost.ifBlank { host.trim() })
+    }
 
     // Saved hosts (Moonlight-style device list)
     var savedHosts by remember { mutableStateOf(SavedHosts.load(context)) }
     var onlineMap by remember { mutableStateOf(mapOf<String, Boolean>()) }
-    LaunchedEffect(savedHosts) {
-        val status = savedHosts.associate { h ->
-            h.host to withContext(Dispatchers.IO) { SavedHosts.isHostOnline(h.host) }
+    LaunchedEffect(savedHosts, localNetworkGranted) {
+        if (!localNetworkGranted) { onlineMap = emptyMap(); return@LaunchedEffect }
+        while (isActive) {
+            onlineMap = savedHosts.map { h ->
+                async(Dispatchers.IO) { h.host to SavedHosts.isHostOnline(h.host) }
+            }.awaitAll().toMap()
+            delay(10_000)
         }
-        onlineMap = status
     }
 
     // LAN auto-discovery (mDNS) — runs automatically while the main screen is shown.
     var discoveredHosts by remember { mutableStateOf(listOf<DiscoveredHost>()) }
     val discovery = remember {
-        DeviceDiscovery(context) { host ->
-            discoveredHosts = (discoveredHosts + host).distinctBy { it.host }
+        DeviceDiscovery(context,
+            onDeviceLost = { lost -> discoveredHosts = discoveredHosts.filterNot { it.host == lost.host } },
+            onDeviceFound = { found -> discoveredHosts = discoveredHosts.filterNot { it.host == found.host } + found })
+    }
+    LifecycleStartEffect(localNetworkGranted) {
+        if (localNetworkGranted) discovery.start()
+        onStopOrDispose {
+            discovery.stop()
+            discoveredHosts = emptyList()
         }
-    }
-    LaunchedEffect(Unit) {
-        discovery.start()
-    }
-    DisposableEffect(Unit) {
-        onDispose { discovery.stop() }
     }
 
     // Moonlight-style unified device list: merge saved hosts and mDNS discoveries
     // by IP so the same machine only appears once.
-    val deviceEntries = remember(discoveredHosts, savedHosts, onlineMap) {
+    val deviceEntries = remember(discoveredHosts, savedHosts, onlineMap, multiDevices) {
         val byHost = linkedMapOf<String, DeviceEntry>()
         savedHosts.forEach { s ->
             byHost[s.host] = DeviceEntry(
@@ -255,37 +243,26 @@ fun MoonToneUI(controller: MoonToneController, activity: MainActivity) {
                 byHost[d.host] = DeviceEntry(d.name, d.host, saved = false, online = true)
             }
         }
+        multiDevices.forEach { device ->
+            if (device.host !in byHost) byHost[device.host] = DeviceEntry(device.host, device.host, false, device.state == MultiConnState.CONNECTED)
+        }
         byHost.values.toList()
     }
 
     // One-tap connect action used by both the host input and saved-host cards.
     val connectAction: (String) -> Unit = { target ->
         scope.launch {
+            if (!localNetworkGranted) { activity.requestLocalNetworkPermission(); return@launch }
             isConnecting = true
             try {
                 if (showManual && rtspUrl.isNotBlank()) {
                     val hostT = target.trim()
-                    controller.pairing.refreshServerInfo(hostT)
-                    val audioRenderer = AndroidAudioRenderer(context, false)
-                    connection.setAudioRenderer(audioRenderer)
-                    connection.connect(
-                        address = hostT,
-                        appVersion = controller.pairing.serverAppVersion,
-                        gfeVersion = controller.pairing.serverGfeVersion,
-                        rtspSessionUrl = rtspUrl.trim(),
-                        serverCodecModeSupport = controller.pairing.serverCodecModeSupport,
-                        audioConfiguration = MoonBridge.AUDIO_CONFIGURATION_STEREO.toInt(),
-                        riAesKey = riKeyHex.takeIf { it.isNotBlank() }
-                            ?.chunked(2)?.map { it.toInt(16).toByte() }?.toByteArray()
-                            ?: ByteArray(16),
-                        riAesIv = riKeyIdHex.takeIf { it.isNotBlank() }
-                            ?.chunked(2)?.map { it.toInt(16).toByte() }?.toByteArray()
-                            ?: ByteArray(16),
-                        audioOnly = controller.pairing.serverAdvertisesAudioOnly ||
-                            HostCapabilities.audioOnly(context, hostT, controller.pairing.serverUniqueId)
+                    controller.connectManually(
+                        hostT, rtspUrl.trim(),
+                        riKeyHex.takeIf { it.isNotBlank() }?.chunked(2)?.map { it.toInt(16).toByte() }?.toByteArray() ?: ByteArray(16),
+                        riKeyIdHex.takeIf { it.isNotBlank() }?.chunked(2)?.map { it.toInt(16).toByte() }?.toByteArray() ?: ByteArray(16)
                     )
-                    activity.startAudioService()
-                    SavedHosts.add(context, "Mac", hostT)
+                    SavedHosts.add(context, hostT, hostT)
                     savedHosts = SavedHosts.load(context)
                 } else {
                     val hostT = target.trim()
@@ -301,9 +278,11 @@ fun MoonToneUI(controller: MoonToneController, activity: MainActivity) {
                     }
 
                     controller.launchAndConnect(hostT)
-                    SavedHosts.add(context, "Mac", hostT)
+                    SavedHosts.add(context, hostT, hostT)
                     savedHosts = SavedHosts.load(context)
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 MoonToneLog.e("UI", "Connect failed", e)
                 connection.setError("Failed: ${e.message}")
@@ -372,12 +351,11 @@ fun MoonToneUI(controller: MoonToneController, activity: MainActivity) {
                                 Switch(
                                     checked = micEnabled,
                                     onCheckedChange = { on ->
-                                        micEnabled = on
                                         if (on) {
                                             val target = controller.currentHost.ifBlank { host.trim() }
-                                            if (!controller.micStart(target)) {
-                                                micEnabled = false
-                                            }
+                                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
+                                                controller.micStart(target)
+                                            else micPermission.launch(Manifest.permission.RECORD_AUDIO)
                                         } else {
                                             controller.micStop()
                                         }
@@ -592,7 +570,7 @@ fun MoonToneUI(controller: MoonToneController, activity: MainActivity) {
                         modifier = Modifier.fillMaxWidth(),
                         color = MaterialTheme.colorScheme.onBackground)
                     if (deviceEntries.isEmpty()) {
-                        Text("正在扫描…",
+                        Text(if (localNetworkGranted) "正在扫描…" else "尚未允许局域网访问",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -664,6 +642,10 @@ fun MoonToneUI(controller: MoonToneController, activity: MainActivity) {
                         )
                     ) {
                         Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                            if (!localNetworkGranted) {
+                                Text("需要局域网权限才能发现和连接电脑。", style = MaterialTheme.typography.bodySmall)
+                                TextButton(onClick = { activity.requestLocalNetworkPermission() }) { Text("允许访问局域网") }
+                            }
                             Text("多设备同时串流", fontWeight = FontWeight.Medium)
                             Spacer(Modifier.height(4.dp))
                             Text(
@@ -692,7 +674,7 @@ fun MoonToneUI(controller: MoonToneController, activity: MainActivity) {
                                                 when {
                                                     md == null -> if (dev.online) "● 在线" else "○ 离线"
                                                     md.state == MultiConnState.CONNECTED -> "● 已连接"
-                                                    md.state == MultiConnState.CONNECTING -> "◐ 连接中"
+                                                    md.state == MultiConnState.CONNECTING -> "◐ ${md.error ?: "连接中"}"
                                                     else -> "● 错误：${md.error ?: "未知"}"
                                                 },
                                                 color = when {
@@ -706,7 +688,7 @@ fun MoonToneUI(controller: MoonToneController, activity: MainActivity) {
                                         if (md == null) {
                                             TextButton(
                                                 onClick = { multiController.connect(dev.host) },
-                                                enabled = dev.online
+                                                enabled = localNetworkGranted
                                             ) { Text("连接") }
                                         } else {
                                             if (md.state == MultiConnState.CONNECTED) {
@@ -717,7 +699,6 @@ fun MoonToneUI(controller: MoonToneController, activity: MainActivity) {
                                             if (md.state == MultiConnState.ERROR) {
                                                 TextButton(
                                                     onClick = {
-                                                        multiController.disconnect(md.slot)
                                                         multiController.connect(dev.host)
                                                     }
                                                 ) { Text("重连") }

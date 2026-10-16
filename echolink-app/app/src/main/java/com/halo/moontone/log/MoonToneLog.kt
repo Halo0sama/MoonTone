@@ -42,11 +42,11 @@ object MoonToneLog {
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    fun init(filesDir: File) {
+    fun init(filesDir: File, processSuffix: String = "") {
         synchronized(lock) {
             if (logFile != null) return
             val dir = File(filesDir, "logs").apply { mkdirs() }
-            logFile = File(dir, "moontone.log")
+            logFile = File(dir, if (processSuffix.isBlank()) "moontone.log" else "moontone-$processSuffix.log")
         }
     }
 
@@ -59,7 +59,8 @@ object MoonToneLog {
     fun e(tag: String, msg: String, tr: Throwable? = null) = log('E', tag, msg, tr)
 
     fun log(level: Char, tag: String, msg: String, tr: Throwable?) {
-        val line = "${dateFmt.format(Date())} $level/$tag: $msg" +
+        val timestamp = synchronized(lock) { dateFmt.format(Date()) }
+        val line = "$timestamp $level/$tag: $msg" +
             (tr?.let { "\n" + stackTraceOf(it) } ?: "")
 
         val logcatMsg = "$tag: $msg"
@@ -99,6 +100,7 @@ object MoonToneLog {
         return sw.toString()
     }
 
+    @Synchronized
     private fun appendToFile(line: String) {
         val f = logFile ?: return
         try {

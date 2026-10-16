@@ -26,6 +26,8 @@ class PcmSource(private val input: InputStream) {
     @Volatile
     var onDisconnected: (() -> Unit)? = null
 
+    var onFirstFrame: (() -> Unit)? = null
+
     @Volatile
     private var stoppedByUser = false
 
@@ -34,9 +36,14 @@ class PcmSource(private val input: InputStream) {
         running = true
         stoppedByUser = false
         reader = thread {
+            var firstFrame = true
             try {
                 while (running) {
                     val frame = PcmProtocol.readFrame(input) ?: break
+                    if (firstFrame) {
+                        firstFrame = false
+                        onFirstFrame?.invoke()
+                    }
                     if (!queue.offer(frame)) {
                         // Main mixer is behind; drop oldest to keep latency low.
                         queue.poll()
@@ -70,78 +77,14 @@ class PcmSource(private val input: InputStream) {
 }
 
 /**
- * Per-source drift compensator.
- *
- * Converts the source's variable-rate frame stream into a fixed 5ms output
- * block. When the source queue is growing (source faster than mixer), it
- * occasionally skips one input sample. When the queue is shrinking (source
- * slower than mixer), it occasionally duplicates one output sample. This keeps
- * the mixer fed without audible whole-frame gaps.
- */
-private class DriftSource(val src: PcmSource) {
-    private var frame: ShortArray? = null
-    private var pos: Int = 0
-    private var adjust: Double = 0.0
-
-    fun updateAdjustment(queueSize: Int) {
-        if (queueSize > 24) {
-            adjust += 0.05
-        } else if (queueSize < 8) {
-            adjust -= 0.05
-        }
-        adjust = adjust.coerceIn(-2.0, 2.0)
-    }
-
-    /** Fills [out] with up to [outLen] samples. Returns true if any data was written. */
-    fun read(out: ShortArray, outLen: Int): Boolean {
-        var written = 0
-        while (written < outLen) {
-            if (frame == null || pos >= frame!!.size) {
-                frame = src.poll()
-                pos = 0
-                if (frame == null) {
-                    // True underflow: fill the remainder with the last output
-                    // sample instead of silence to avoid a harsh click.
-                    if (written > 0) {
-                        val last = out[written - 1]
-                        while (written < outLen) {
-                            out[written] = last
-                            written++
-                        }
-                    }
-                    return written > 0
-                }
-
-                // Apply one sample-level correction per new frame.
-                if (adjust >= 1.0) {
-                    pos = 1
-                    adjust -= 1.0
-                } else if (adjust <= -1.0) {
-                    if (written < outLen) {
-                        out[written] = frame!![0]
-                        written++
-                    }
-                    adjust += 1.0
-                }
-            }
-
-            val n = minOf(frame!!.size - pos, outLen - written)
-            System.arraycopy(frame!!, pos, out, written, n)
-            written += n
-            pos += n
-        }
-        return true
-    }
-}
-
-/**
  * Mixes PCM from multiple [PcmSource]s and writes the result to a single
  * 48kHz stereo AudioTrack.
  */
 class AudioMixer(private val context: Context) {
 
     private val sources = CopyOnWriteArrayList<PcmSource>()
-    private val drifters = CopyOnWriteArrayList<DriftSource>()
+    private val drifters = CopyOnWriteArrayList<Pair<PcmSource, StereoDriftBuffer>>()
+    @Volatile
     private var track: AudioTrack? = null
     private var mixer: Thread? = null
     @Volatile
@@ -171,71 +114,78 @@ class AudioMixer(private val context: Context) {
             .setTransferMode(AudioTrack.MODE_STREAM)
             .setBufferSizeInBytes(maxOf(minBuf, (PcmProtocol.SAMPLE_RATE / 200 * PcmProtocol.CHANNELS) * 2 * 24)) // ~120ms
             .build()
-        t.play()
+        try { t.play() } catch (e: Exception) { t.release(); throw e }
         track = t
         running = true
-        mixer = thread {
-            // Moonlight Opus packets are 5ms -> 240 frames/channel -> 480 shorts stereo.
-            val frameSize = PcmProtocol.SAMPLE_RATE / 200 * PcmProtocol.CHANNELS // 5ms
+        mixer = thread(name = "moontone-mixer") {
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO)
+            val frameSize = PcmProtocol.SAMPLE_RATE / 200 * PcmProtocol.CHANNELS
             val mixed = ShortArray(frameSize)
+            val sum = FloatArray(frameSize)
             val sourceOut = ShortArray(frameSize)
-            while (running) {
-                mixed.fill(0)
-                var any = false
-                // Normalize multi-source mixing to avoid hard clipping distortion.
-                val mixScale = 1f / sources.size.coerceAtLeast(1)
-                for (drifter in drifters) {
-                    sourceOut.fill(0)
-                    if (!drifter.read(sourceOut, frameSize)) continue
-                    any = true
-                    val vol = drifter.src.volume * mixScale
-                    if (vol <= 0f) continue
-                    for (i in 0 until frameSize) {
-                        val scaled = (sourceOut[i].toInt() * vol).toInt()
-                        val v = mixed[i].toInt() + scaled
-                        mixed[i] = if (v > 32767) 32767 else if (v < -32768) -32768 else v.toShort()
+            try {
+                while (running && track === t) {
+                    sum.fill(0f)
+                    var contributors = 0
+                    var hadData = false
+                    for ((source, drifter) in drifters) {
+                        sourceOut.fill(0)
+                        val hasData = drifter.read(sourceOut)
+                        hadData = hadData || hasData
+                        drifter.updateAdjustment(source.size())
+                        val gain = source.volume
+                        if (!hasData || gain <= 0f) continue
+                        contributors++
+                        PcmMixing.add(sum, sourceOut, gain)
                     }
-                    drifter.updateAdjustment(drifter.src.size())
+                    if (hadData) {
+                        PcmMixing.finish(sum, contributors, mixed)
+                        var written = 0
+                        while (written < mixed.size && running && track === t) {
+                            val n = t.write(mixed, written, mixed.size - written)
+                            if (n <= 0) break
+                            written += n
+                        }
+                    } else {
+                        Thread.sleep(2)
+                    }
                 }
-                if (any) {
-                    track?.write(mixed, 0, mixed.size)
-                } else {
-                    Thread.sleep(2)
-                }
+            } catch (_: InterruptedException) {
+                // Normal shutdown while idle.
+            } catch (e: IllegalStateException) {
+                if (running && track === t) MoonToneLog.e("AudioMixer", "playback failed", e)
             }
         }
         MoonToneLog.i("AudioMixer", "started")
     }
 
-    fun addSource(input: InputStream): PcmSource {
-        val src = PcmSource(input)
-        src.start()
+    fun addSource(src: PcmSource) {
         sources.add(src)
-        drifters.add(DriftSource(src))
+        drifters.add(src to StereoDriftBuffer(src::poll))
         MoonToneLog.i("AudioMixer", "source added, total=${sources.size}")
-        return src
     }
 
     fun removeSource(src: PcmSource) {
         src.stop()
         sources.remove(src)
-        drifters.removeAll { it.src == src }
+        drifters.removeAll { it.first === src }
         MoonToneLog.i("AudioMixer", "source removed, total=${sources.size}")
     }
 
     fun stop() {
         running = false
+        val oldTrack = track
+        track = null
         sources.forEach { it.stop() }
         sources.clear()
         drifters.clear()
         try {
-            track?.pause()
-            track?.flush()
-            track?.release()
-        } catch (e: Exception) {
-        }
-        track = null
+            oldTrack?.pause()
+            oldTrack?.flush()
+        } catch (_: Exception) {}
         mixer?.interrupt()
+        try { mixer?.join(500) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
         mixer = null
+        try { oldTrack?.release() } catch (_: Exception) {}
     }
 }

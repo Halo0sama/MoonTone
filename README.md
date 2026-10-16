@@ -18,8 +18,8 @@ Stream audio from multiple PCs to your Android phone at the same time, mix it on
 - Connect multiple Sunshine hosts at the same time (currently 32 slots, extendable)
 - Mix multiple PCM streams and output through one AudioTrack
 - Per-device controls: connect / disconnect / mute / volume
-- Auto-reconnect (retries up to 3 times after an unexpected worker disconnect)
-- Adaptive quality / latency modes
+- Auto-reconnect (up to 3 retries; manual disconnect cancels pending retries)
+- Automatic latency tuning for single-device playback
 - Real-time audio spec display
 - Microphone uplink (UDP 48100 back to PC)
 - Material You dynamic colors
@@ -41,7 +41,7 @@ See [`docs/MULTI_CONNECTION.md`](docs/MULTI_CONNECTION.md) for details.
 
 ## Build
 
-Requirements: Android SDK / NDK.
+Requirements: JDK 21, Android SDK 37, Build Tools 36.0.0, NDK 27.0.12077973. Current APKs support arm64 Android 7.0 (API 24) and later. See [development notes](docs/DEVELOPMENT.md) for tests and current limitations.
 
 ```bash
 cd echolink-app
@@ -55,7 +55,7 @@ app/build/outputs/apk/debug/app-debug.apk
 
 ## Usage
 
-1. Install the APK and open MoonTone.
+1. Install the APK and open MoonTone. On Android 17+, grant local-network access when prompted.
 2. Make sure your phone and PCs are on the same LAN.
 3. The app automatically discovers Sunshine hosts via mDNS (`_nvstream._tcp`).
 4. In the **Multi-device streaming** panel, tap **Connect** on each PC you want to hear.
@@ -97,7 +97,7 @@ python3 tools/mic_receiver.py
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) for original MoonTone code. Bundled components retain their upstream licenses; see [release notes](docs/DEVELOPMENT.md#授权与发布记录).
 
 ---
 
@@ -121,8 +121,8 @@ python3 tools/mic_receiver.py
 - 多设备同时连接（当前 32 路 slot，可扩展）
 - 多路 PCM 混音输出
 - 每路独立：连接 / 断开 / 静音 / 音量
-- 自动重连（Worker 意外断开后重试 3 次）
-- 自适应音质 / 延迟模式
+- 自动重连（最多重试 3 次，手动断开会取消待执行的重连）
+- 单设备播放自动调节延迟缓冲
 - 实时音质规格显示
 - 麦克风上行（UDP 48100 回传 PC）
 - Material You 动态取色
@@ -144,7 +144,7 @@ python3 tools/mic_receiver.py
 
 ## 构建
 
-需要 Android SDK / NDK。
+需要 JDK 21、Android SDK 37、Build Tools 36.0.0、NDK 27.0.12077973。当前 APK 支持 arm64、Android 7.0（API 24）及以上。开发和验证见[开发接管记录](docs/DEVELOPMENT.md)。
 
 ```bash
 cd echolink-app
@@ -158,7 +158,7 @@ app/build/outputs/apk/debug/app-debug.apk
 
 ## 使用说明
 
-1. 安装 APK 并打开 MoonTone。
+1. 安装 APK 并打开 MoonTone；Android 17 及以上请允许局域网访问。
 2. 确保手机和电脑在同一个局域网。
 3. App 会自动通过 mDNS（`_nvstream._tcp`）发现 Sunshine 主机。
 4. 在“多设备同时串流”面板里，对想听的每台电脑点击“连接”。
@@ -200,4 +200,4 @@ python3 tools/mic_receiver.py
 
 ## License
 
-[MIT](LICENSE)
+MoonTone 原创代码使用 [MIT](LICENSE)；嵌入组件保留各自上游许可，见[授权与发布记录](docs/DEVELOPMENT.md#授权与发布记录)。
