@@ -1,28 +1,37 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  MoonTone adaptive-icon foreground: an expressive crescent moon (white) plus three rounded
+  sound-wave bars fading to the right. Everything stays inside the 66 dp safe circle of the
+  108 x 108 adaptive canvas (centre 54,54; radius 33) so no launcher mask clips it.
+  Artwork is white so it reads on the violet -> mint gradient background layer.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- white audio bars (behind), moved down together with disc -->
+
+    <!-- Crescent moon: outer circle C1=(44,54) R=22 minus bite circle C2=(53,44) r=19. -->
     <path
         android:fillColor="#FFFFFFFF"
-        android:pathData="M30,42 h4 v36 h-4 z" />
+        android:pathData="M37.527,32.974 A22,22 0 1,0 65.589,58.230 A19,19 0 0,1 37.527,32.974 Z" />
+
+    <!-- Sound wave: three round-capped bars, tallest nearest the moon. -->
     <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M38,34 h4 v52 h-4 z" />
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:pathData="M71,39 L71,71" />
     <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M46,44 h4 v32 h-4 z" />
-    <!-- blue disc (front), moved down -->
+        android:strokeColor="#FFFFFFFF"
+        android:strokeAlpha="0.74"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:pathData="M78.5,44 L78.5,66" />
     <path
-        android:fillColor="#FF4FC3F7"
-        android:pathData="M40,60 A27,27 0 1,1 39.99,60 Z" />
-    <!-- yellow crescent, unchanged -->
-    <path
-        android:fillColor="#FFFFEB82"
-        android:pathData="M72,32 A10,10 0 1,1 71.99,32 Z" />
-    <path
-        android:fillColor="#FF0D1117"
-        android:pathData="M76,28 A10,10 0 1,0 76,36 Z" />
+        android:strokeColor="#FFFFFFFF"
+        android:strokeAlpha="0.5"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:pathData="M84,50 L84,60" />
 </vector>

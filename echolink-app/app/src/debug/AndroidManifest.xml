@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!-- Debug-only visual verification harness for M3 Expressive state matrices.
+             Never part of release builds (src/debug is not merged into release). -->
+        <activity
+            android:name=".ui.DesignPreviewActivity"
+            android:exported="true"
+            android:theme="@style/Theme.MoonTone" />
+    </application>
+
+</manifest>

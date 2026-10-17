@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  MoonTone adaptive launcher icon (API 26+).
+  Layer 1: violet -> mint "Aurora Night" gradient (drawable).
+  Layer 2: white crescent moon + rounded sound-wave bars, inside the 66 dp safe circle.
+  Layer 3: monochrome silhouette for Android 13+ themed icons (ignored on older platforms).
+-->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@color/ic_launcher_background"/>
-    <foreground android:drawable="@drawable/ic_launcher_foreground"/>
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_monochrome" />
 </adaptive-icon>

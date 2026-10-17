@@ -3,6 +3,7 @@ package com.halo.moontone.ui
 import android.Manifest
 import android.app.AlertDialog
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -11,9 +12,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
@@ -22,6 +25,7 @@ import com.halo.moontone.MoonToneApp
 import com.halo.moontone.control.MoonToneController
 import com.halo.moontone.data.AppPreferences
 import com.halo.moontone.ui.theme.MoonToneTheme
+import com.halo.moontone.ui.theme.ThemeMode
 import com.halo.moontone.update.UpdateChecker
 import kotlinx.coroutines.launch
 
@@ -121,8 +125,26 @@ class MainActivity : ComponentActivity() {
         }
         if (permissions.isNotEmpty()) permLauncher.launch(permissions.toTypedArray())
         setContent {
-            MoonToneTheme {
-                MoonToneUI(controller, this, localNetworkGranted)
+            // Appearance can change from Settings any time; observe the same preference store.
+            val prefs = remember { AppPreferences.preferences(this@MainActivity) }
+            var themeMode by remember {
+                mutableStateOf(ThemeMode.fromStorage(AppPreferences.themeMode(this@MainActivity)))
+            }
+            var dynamicColor by remember { mutableStateOf(AppPreferences.dynamicColor(this@MainActivity)) }
+            DisposableEffect(prefs) {
+                val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+                    when (key) {
+                        AppPreferences.KEY_THEME_MODE ->
+                            themeMode = ThemeMode.fromStorage(AppPreferences.themeMode(this@MainActivity))
+                        AppPreferences.KEY_DYNAMIC_COLOR ->
+                            dynamicColor = AppPreferences.dynamicColor(this@MainActivity)
+                    }
+                }
+                prefs.registerOnSharedPreferenceChangeListener(listener)
+                onDispose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+            }
+            MoonToneTheme(themeMode = themeMode, dynamicColor = dynamicColor) {
+                MoonToneUI(controller, this@MainActivity, localNetworkGranted)
             }
         }
     }
