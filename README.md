@@ -5,11 +5,13 @@ Stream audio from multiple PCs to your Android phone at the same time, mix it on
 > Pure-audio experience: a tiny dummy video stream keeps the session alive; nothing is shown on screen.
 > Multi-device simultaneous streaming: each connection runs in its own Android process, the main process mixes PCM.
 
+[Download v0.3.0](https://github.com/Halo0sama/MoonTone/releases/tag/v0.3.0) · [Release notes](docs/releases/v0.3.0.md) · [Third-party notices](THIRD_PARTY_NOTICES.md)
+
 ## Screenshots
 
 <p align="center">
-  <img src="screenshots/main.jpg" width="40%" />
-  <img src="screenshots/connected.jpg" width="40%" />
+  <img src="screenshots/home-v0.3.0.png" width="40%" />
+  <img src="screenshots/settings-v0.3.0.png" width="40%" />
 </p>
 
 ## Features
@@ -19,8 +21,8 @@ Stream audio from multiple PCs to your Android phone at the same time, mix it on
 - Mix multiple PCM streams and output through one AudioTrack
 - Per-device controls: connect / disconnect / mute / volume
 - Auto-reconnect (up to 3 retries; manual disconnect cancels pending retries)
-- Automatic latency tuning for single-device playback
-- Real-time audio spec display
+- Adaptive audio buffering for single-device playback and multi-device mixing
+- Audio format and system output information
 - Microphone uplink (UDP 48100 back to PC)
 - Material You dynamic colors
 - In-app update check (GitHub Releases, prompts on new version)
@@ -111,8 +113,8 @@ python3 tools/mic_receiver.py
 ## 截图
 
 <p align="center">
-  <img src="screenshots/main.jpg" width="40%" />
-  <img src="screenshots/connected.jpg" width="40%" />
+  <img src="screenshots/home-v0.3.0.png" width="40%" />
+  <img src="screenshots/settings-v0.3.0.png" width="40%" />
 </p>
 
 ## 功能

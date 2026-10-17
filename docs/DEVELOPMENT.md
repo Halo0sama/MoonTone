@@ -88,7 +88,7 @@ Android 17 权限依据：[Android 局域网权限](https://developer.android.co
 
 ## 授权与发布记录
 
-顶层现有 `LICENSE` 为 MIT；嵌入的 `moonlight-common-c/LICENSE.txt` 为 GPLv3，ENet 有独立 LICENSE，Java/JNI 和预编译 Opus/OpenSSL 也有上游来源。本轮保留原许可证；顶层“MIT”不足以描述全部 APK 组件。公开发布前应整理第三方声明及与二进制对应的源码、原生依赖版本和构建来源。此项是当前仓库的发布文档缺口，不能通过给所有文件改成 MIT 来解决。
+顶层现有 `LICENSE` 为 MIT；嵌入的 `moonlight-common-c/LICENSE.txt` 为 GPLv3，ENet 有独立 LICENSE，Java/JNI 和预编译 Opus/OpenSSL 也有上游来源。原许可证保留，顶层“MIT”不足以描述全部 APK 组件。v0.3.0 发布时已补充[第三方组件及许可说明](../THIRD_PARTY_NOTICES.md)、APK 内许可证文本、原生依赖版本与源码归档；继承的预编译库尚不具备完整原始构建溯源，边界见[发布构建记录](RELEASE.md)。
 
 ## 本轮验证记录
 
