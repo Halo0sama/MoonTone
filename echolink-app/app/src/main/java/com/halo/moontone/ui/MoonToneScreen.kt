@@ -425,6 +425,36 @@ private fun HomeContent(
     onMultiMute: (Int, Boolean) -> Unit,
     onMultiVolume: (Int, Float) -> Unit,
 ) {
+    // Online / active devices first; offline devices are grouped into a collapsible section.
+    val activeHosts = remember(devices, state, currentHost) {
+        buildSet {
+            devices.forEach { device -> if (device.state != MultiConnState.IDLE) add(device.host) }
+            if (state == MoonToneState.CONNECTED && currentHost.isNotBlank()) add(currentHost)
+        }
+    }
+    val sortedEntries = remember(entries, activeHosts) {
+        entries.sortedWith(
+            compareByDescending<DeviceEntry> { it.host in activeHosts }
+                .thenByDescending { it.online }
+        )
+    }
+    val onlineEntries = remember(sortedEntries, activeHosts) {
+        sortedEntries.filter { it.host in activeHosts || it.online }
+    }
+    val offlineEntries = remember(sortedEntries, activeHosts) {
+        sortedEntries.filterNot { it.host in activeHosts || it.online }
+    }
+    var offlineExpanded by rememberSaveable { mutableStateOf(false) }
+    // Never hide the only devices the user has: reveal the offline group only when the first
+    // discovery probe settles without a single online host (avoids a flash-expand before the
+    // first online map arrives).
+    LaunchedEffect(onlineEntries.size, offlineEntries.size) {
+        if (onlineEntries.isEmpty() && offlineEntries.isNotEmpty()) {
+            delay(3_000)
+            offlineExpanded = true
+        }
+    }
+
     LazyColumn(
         modifier = modifier,
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 40.dp),
@@ -521,7 +551,11 @@ private fun HomeContent(
                     modifier = Modifier.weight(1f),
                     trailing = {
                         Text(
-                            text = if (entries.isEmpty()) "寻找中" else "${entries.size} 台",
+                            text = when {
+                                entries.isEmpty() -> "寻找中"
+                                onlineEntries.isNotEmpty() -> "${onlineEntries.size} 台在线"
+                                else -> "${entries.size} 台"
+                            },
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -534,28 +568,55 @@ private fun HomeContent(
             item { EmptyDevicesCard(localNetworkGranted, onNavigateSettings) }
         }
 
-        items(entries, key = { it.host }) { device ->
-            val md = devices.firstOrNull { it.host == device.host }
-            val current = !mixMode && state == MoonToneState.CONNECTED && currentHost == device.host
-            DeviceRowCard(
+        items(onlineEntries, key = { it.host }) { device ->
+            DeviceListCard(
                 device = device,
-                multi = md,
-                current = current,
-                singleMuted = singleMuted,
+                devices = devices,
                 mixMode = mixMode,
+                state = state,
+                currentHost = currentHost,
+                singleMuted = singleMuted,
                 canConnect = canConnect,
-                onConnect = {
-                    if (mixMode) onMultiConnect(device.host) else onConnect(device.host)
-                },
-                onDisconnect = {
-                    if (mixMode && md != null) onMultiDisconnect(md.slot) else onSingleDisconnect()
-                },
-                onMute = {
-                    if (mixMode && md != null) onMultiMute(md.slot, !md.muted) else onToggleMute()
-                },
-                onVolume = { if (md != null) onMultiVolume(md.slot, it) },
-                onSave = { onSaveToggle(device) },
+                onConnect = onConnect,
+                onMultiConnect = onMultiConnect,
+                onSingleDisconnect = onSingleDisconnect,
+                onMultiDisconnect = onMultiDisconnect,
+                onToggleMute = onToggleMute,
+                onMultiMute = onMultiMute,
+                onMultiVolume = onMultiVolume,
+                onSaveToggle = onSaveToggle,
             )
+        }
+
+        if (offlineEntries.isNotEmpty()) {
+            item {
+                OfflineGroupHeader(
+                    count = offlineEntries.size,
+                    expanded = offlineExpanded,
+                    onToggle = { offlineExpanded = !offlineExpanded },
+                )
+            }
+            if (offlineExpanded) {
+                items(offlineEntries, key = { it.host }) { device ->
+                    DeviceListCard(
+                        device = device,
+                        devices = devices,
+                        mixMode = mixMode,
+                        state = state,
+                        currentHost = currentHost,
+                        singleMuted = singleMuted,
+                        canConnect = canConnect,
+                        onConnect = onConnect,
+                        onMultiConnect = onMultiConnect,
+                        onSingleDisconnect = onSingleDisconnect,
+                        onMultiDisconnect = onMultiDisconnect,
+                        onToggleMute = onToggleMute,
+                        onMultiMute = onMultiMute,
+                        onMultiVolume = onMultiVolume,
+                        onSaveToggle = onSaveToggle,
+                    )
+                }
+            }
         }
 
         item {
@@ -982,6 +1043,103 @@ private fun ModeSelector(mixMode: Boolean, enabled: Boolean, onSelect: (Boolean)
             weight = 1f,
             enabled = enabled,
         )
+    }
+}
+
+@Composable
+private fun DeviceListCard(
+    device: DeviceEntry,
+    devices: List<MultiDeviceState>,
+    mixMode: Boolean,
+    state: MoonToneState,
+    currentHost: String,
+    singleMuted: Boolean,
+    canConnect: Boolean,
+    onConnect: (String) -> Unit,
+    onMultiConnect: (String) -> Unit,
+    onSingleDisconnect: () -> Unit,
+    onMultiDisconnect: (Int) -> Unit,
+    onToggleMute: () -> Unit,
+    onMultiMute: (Int, Boolean) -> Unit,
+    onMultiVolume: (Int, Float) -> Unit,
+    onSaveToggle: (DeviceEntry) -> Unit,
+) {
+    val multi = devices.firstOrNull { it.host == device.host }
+    val current = !mixMode && state == MoonToneState.CONNECTED && currentHost == device.host
+    DeviceRowCard(
+        device = device,
+        multi = multi,
+        current = current,
+        singleMuted = singleMuted,
+        mixMode = mixMode,
+        canConnect = canConnect,
+        onConnect = {
+            if (mixMode) onMultiConnect(device.host) else onConnect(device.host)
+        },
+        onDisconnect = {
+            if (mixMode && multi != null) onMultiDisconnect(multi.slot) else onSingleDisconnect()
+        },
+        onMute = {
+            if (mixMode && multi != null) onMultiMute(multi.slot, !multi.muted) else onToggleMute()
+        },
+        onVolume = { if (multi != null) onMultiVolume(multi.slot, it) },
+        onSave = { onSaveToggle(device) },
+    )
+}
+
+@Composable
+private fun OfflineGroupHeader(
+    count: Int,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    val rotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec(),
+        label = "offlineChevron",
+    )
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MoonToneShape.card)
+            .clickable(onClick = onToggle),
+        shape = MoonToneShape.card,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = androidx.compose.foundation.BorderStroke(
+            width = 1.dp,
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+        ),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            IconBadge(
+                icon = Icons.Rounded.WifiOff,
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                size = 40.dp,
+            )
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("未在线设备", style = MaterialTheme.typography.titleSmallEmphasized)
+                Text(
+                    text = if (expanded) {
+                        "点按收起 · $count 台"
+                    } else {
+                        "$count 台设备当前未在线，点按展开"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Icon(
+                Icons.Rounded.ExpandMore,
+                contentDescription = if (expanded) "收起未在线设备" else "展开未在线设备",
+                modifier = Modifier.rotate(rotation),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

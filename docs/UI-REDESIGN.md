@@ -108,6 +108,10 @@ must reuse the components above for section headers, cards, icon badges, setting
 `MoonToneScreen.kt` owns the scaffold and top bar:
 - Home: `LargeFlexibleTopAppBar` (title "MoonTone", subtitle = live status, tonal settings
   action) + `TopAppBarDefaults.exitUntilCollapsedScrollBehavior`.
+- Home device list: connected/connecting/error sessions and online devices are sorted to the
+  top (`N 台在线` count); devices that fail the online probe are collected into a collapsible
+  "未在线设备" group (collapsed by default, auto-expanded after the first discovery probe when
+  nothing is online so the user is never left with an empty list).
 - Sub-pages: same bar component collapsed-style with back icon and page title
   (设置 / 设备声音 / 高级连接 / 运行日志 / 音频信息).
 - Page transitions: `AnimatedContent` with expressive fade+scale; `BackHandler` unchanged.
