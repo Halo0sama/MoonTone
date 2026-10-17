@@ -25,7 +25,16 @@ jobs:
           packages: platform-tools
           log-accepted-android-sdk-licenses: false
       - name: Install Android toolchain
-        run: sdkmanager 'platforms;android-37' 'build-tools;36.0.0' 'ndk;27.0.12077973'
+        run: |
+          sdkmanager --list > "$RUNNER_TEMP/moontone-sdk-packages.txt"
+          platform=$(awk -F '|' '{gsub(/^[ \t]+|[ \t]+$/, "", $1); if ($1 == "platforms;android-37" || $1 == "platforms;android-37.0") {print $1; exit}}' "$RUNNER_TEMP/moontone-sdk-packages.txt")
+          if [ -z "$platform" ]; then
+            echo "Android 37 platform not found in the SDK repository"
+            cat "$RUNNER_TEMP/moontone-sdk-packages.txt"
+            exit 1
+          fi
+          echo "Installing $platform"
+          sdkmanager "$platform" 'build-tools;36.0.0' 'ndk;27.0.12077973'
       - name: Receiver regression tests
         run: python3 -m unittest discover -s tools/tests -v
       - name: Android unit tests, lint and debug APK
