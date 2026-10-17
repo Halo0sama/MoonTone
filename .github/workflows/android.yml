@@ -19,6 +19,8 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      - name: Set up Android SDK tools
+        uses: android-actions/setup-android@v3
       - name: Install Android toolchain
         run: sdkmanager 'platforms;android-37' 'build-tools;36.0.0' 'ndk;27.0.12077973'
       - name: Receiver regression tests

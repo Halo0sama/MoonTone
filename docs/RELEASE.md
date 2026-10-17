@@ -12,6 +12,8 @@
 
 发布前验证：34 项 JVM 单元测试、16 项 Android 17 arm64 运行测试、10 项 Python 接收器测试全部通过，0 failures / 0 errors / 0 skipped；Debug 和 Release 构建通过；Lint 为 0 errors、30 warnings。
 
+GitHub CI 显式初始化 Android SDK 命令行工具，再安装指定 SDK/NDK，避免依赖运行器预装 `sdkmanager`。[远端检查记录](https://github.com/Halo0sama/MoonTone/actions/workflows/android.yml?query=branch%3Amain)。
+
 专用模拟器先安装 GitHub 已发布 v0.2.0 APK，写入测试设备及旧格式主机声音偏好，再原位安装签名后的 v0.3.0 Release。保存的设备、设备声音例外、设置页入口和唯一全局声音开关均核验通过。APK 签名与旧发布包一致；版本号、arm64 ABI、不可调试标志和 16 KB ZIP 对齐均已验证。ZIP 对齐检查不等同于对所有设备页大小或真实耳机输出的验证。
 
 日志位于本地 `echolink-app/app/build/reports/release-v0.3.0/`；不将本地报告目录、凭据辅助脚本、旧安装包或签名密钥加入发布附件。手机此前已安装设置页构建，本次发布检查没有再次安装或修改实体手机。
