@@ -58,12 +58,12 @@ app/build/outputs/apk/debug/app-debug.apk
 1. Install the APK and open MoonTone. On Android 17+, grant local-network access when prompted.
 2. Make sure your phone and PCs are on the same LAN.
 3. The app automatically discovers Sunshine hosts via mDNS (`_nvstream._tcp`).
-4. In the **Multi-device streaming** panel, tap **Connect** on each PC you want to hear. Enable **Play audio on host** if the PC should keep playing locally; the choice is saved per host and applies on the next connection/reconnection.
+4. Choose **Single-device playback** or **Multi-device mixing**, then connect the PCs you want to hear. Open the top-right **Settings → Playback** to choose whether hosts also play locally; device exceptions are managed on a separate settings page.
 5. Once connected, use the per-device controls:
    - **Phone mute** to silence that stream on the phone
    - **Volume** slider to adjust its level
    - **Disconnect** to stop that stream
-6. Optional: enable **Microphone uplink** to send the phone microphone back to the currently active PC (UDP 48100).
+6. Optional: while a single-device connection is active, enable **Settings → Playback → Microphone uplink** to send the phone microphone back to that PC (UDP 48100). Logs, public-certificate export, advanced RTSP connection and update checks are also in Settings.
 
 ### Manual connection
 
@@ -161,12 +161,12 @@ app/build/outputs/apk/debug/app-debug.apk
 1. 安装 APK 并打开 MoonTone；Android 17 及以上请允许局域网访问。
 2. 确保手机和电脑在同一个局域网。
 3. App 会自动通过 mDNS（`_nvstream._tcp`）发现 Sunshine 主机。
-4. 在“多设备同时串流”面板里，对想听的每台电脑点击“连接”。若电脑也要出声，打开“主机同时播放声音”；按主机保存，下次连接或重连生效。详见[主机声音选项](docs/HOST_AUDIO.md)。
+4. 首页选择“单设备播放”或“多设备混音”，对想听的电脑点击“连接”。主机是否同时出声统一在右上角“设置 → 播放”中修改，也可设置设备例外；下次连接或重连生效。详见[设置页面](docs/SETTINGS.md)与[主机声音选项](docs/HOST_AUDIO.md)。
 5. 连接后可用每台设备的独立控制：
    - “手机静音”：关闭手机端该路声音
    - “音量”滑块：调节该路音量
    - “断开”：停止该路串流
-6. 可选：开启“麦克风上行”，把手机麦克风回传到当前 PC（UDP 48100）。
+6. 可选：单设备连接后，在“设置 → 播放 → 麦克风上行”中把手机麦克风回传到当前 PC（UDP 48100）。日志、证书导出、高级 RTSP 连接和更新检查也统一放在设置页。
 
 ### 手动连接
 

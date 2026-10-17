@@ -28,6 +28,10 @@ Debug APK：`app/build/outputs/apk/debug/app-debug.apk`。Release 构建命令�
 - `multi/AudioMixer.kt` / `StereoDriftBuffer.kt`：PCM 接收、立体声漂移补偿、混音。
 - `audio/MoonToneMicrophoneService.kt`：麦克风前台服务。
 - `audio/AdaptivePcmBuffer.kt` / `PlaybackBufferTuner.kt`：单路和混音共用的抖动缓冲、平滑时间校正及 AudioTrack 有效缓冲调节。
-- `ui/MainActivity.kt`：Compose 界面、运行时权限和设备列表。
+- `data/AppPreferences.kt` / `HostAudioPreferences.kt`：全局默认、启动更新检查与兼容旧格式的设备声音例外。
+- `ui/MainActivity.kt`：Activity、运行时权限和更新检查。
+- `ui/MoonToneScreen.kt`：页面导航、设备发现、单设备播放/多设备混音首页。
+- `ui/SettingsScreen.kt`：集中设置页与设备声音例外。
+- `ui/AdvancedScreens.kt`：手动 RTSP 连接、日志和音频信息。
 
 单路播放和多路混音共用自适应延迟策略；`AdaptiveLatencyController` 仅采集单路调试状态。不要把源码中的缓冲参数直接当作实测端到端延迟。详见[延迟优化记录](../docs/LATENCY.md)。

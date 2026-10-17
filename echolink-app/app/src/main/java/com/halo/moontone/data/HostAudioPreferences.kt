@@ -8,8 +8,18 @@ object HostAudioPreferences {
     fun preferences(context: Context): SharedPreferences =
         context.getSharedPreferences("moontone_host_audio", Context.MODE_PRIVATE)
 
+    fun overrideForHost(context: Context, host: String): Boolean? {
+        val prefs = preferences(context)
+        val key = host.trim()
+        return if (prefs.contains(key)) prefs.getBoolean(key, false) else null
+    }
+
     fun playOnHost(context: Context, host: String): Boolean =
-        preferences(context).getBoolean(host.trim(), false)
+        overrideForHost(context, host) ?: AppPreferences.playOnHostByDefault(context)
+
+    fun followDefault(context: Context, host: String) {
+        preferences(context).edit().remove(host.trim()).apply()
+    }
 
     fun setPlayOnHost(context: Context, host: String, enabled: Boolean) {
         require(host.isNotBlank())

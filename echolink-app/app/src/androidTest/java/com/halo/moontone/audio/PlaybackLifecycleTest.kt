@@ -9,6 +9,7 @@ import com.halo.moontone.MoonToneApp
 import com.halo.moontone.connection.MoonToneConnection
 import com.halo.moontone.connection.MoonToneState
 import com.halo.moontone.ui.MainActivity
+import com.halo.moontone.ui.UiActions
 import com.limelight.nvstream.jni.MoonBridge
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -79,6 +80,11 @@ class PlaybackLifecycleTest {
                     assertEquals("MTUP", String(packet.data, 0, 4))
                     assertTrue(packet.length > 20)
                     assertTrue(app.controller.micStatus())
+                    UiActions.clickDescription("打开设置")
+                    UiActions.waitText("设置")
+                    assertTrue(app.controller.micStatus())
+                    UiActions.clickDescription("返回")
+                    UiActions.waitText("MoonTone")
                     scenario.moveToState(Lifecycle.State.CREATED)
                     assertTrue(app.controller.micStatus())
                     // Discard packets queued before backgrounding, then require
