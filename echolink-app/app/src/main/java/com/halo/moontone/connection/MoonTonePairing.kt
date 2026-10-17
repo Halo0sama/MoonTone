@@ -328,7 +328,7 @@ class MoonTonePairing(private val crypto: MoonToneCrypto) {
         xmlTag(xml, "ID") ?: throw Exception("No app found in applist: ${xml.take(300)}")
     }
 
-    suspend fun launchSession(host: String, audioOnly: Boolean = false) = withContext(Dispatchers.IO) {
+    suspend fun launchSession(host: String, audioOnly: Boolean = false, playAudioOnHost: Boolean = false) = withContext(Dispatchers.IO) {
         val appId = discoverDesktopAppId(host)
 
         // Generate random client-side keys for the session
@@ -341,7 +341,7 @@ class MoonTonePairing(private val crypto: MoonToneCrypto) {
         val audioOnlyArg = if (audioOnly) "&audioOnly=1" else ""
         val launchQuery =
             "appid=$appId&rikey=${bytesToHex(clientRiKey)}&rikeyid=$clientRiKeyId&surroundAudioInfo=196615" +
-                "&localAudioPlayMode=0&continuousAudio=1$audioOnlyArg"
+                "&localAudioPlayMode=${if (playAudioOnHost) 1 else 0}&continuousAudio=1$audioOnlyArg"
         var resp = launchCmd(host, launchQuery)
 
         // If a previous session hasn't fully exited, tell Sunshine to cancel it and retry.

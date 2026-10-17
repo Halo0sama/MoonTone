@@ -4,6 +4,7 @@ import android.content.Context
 import com.halo.moontone.connection.MoonTonePairing
 import com.halo.moontone.crypto.MoonToneCrypto
 import com.halo.moontone.data.HostCapabilities
+import com.halo.moontone.data.HostAudioPreferences
 import com.halo.moontone.log.MoonToneLog
 import com.limelight.nvstream.jni.MoonBridge
 
@@ -30,7 +31,7 @@ class MultiSessionLauncher(private val context: Context, private val crypto: Moo
         // fall back once and are remembered).
         val useAudioOnly = pairing.serverAdvertisesAudioOnly ||
             HostCapabilities.audioOnly(context, host, pairing.serverUniqueId)
-        pairing.launchSession(host, useAudioOnly)
+        pairing.launchSession(host, useAudioOnly, playAudioOnHost = HostAudioPreferences.playOnHost(context, host))
         MoonToneLog.i("MultiLauncher", "prepared $host -> ${pairing.rtspUrl.take(60)} audioOnly=$useAudioOnly")
         return WorkerSessionParams(
             host = host,

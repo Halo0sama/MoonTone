@@ -4,6 +4,8 @@ import android.content.ContextWrapper
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.halo.moontone.crypto.MoonToneCrypto
+import com.halo.moontone.data.HostAudioPreferences
+import com.halo.moontone.multi.MultiSessionLauncher
 import java.io.File
 import java.math.BigInteger
 import java.net.InetAddress
@@ -30,7 +32,11 @@ class PairingTlsTest {
     @Test fun legacyCertificateMigrationAndPinnedReconnectUseMutualTls(): Unit = runBlocking {
         val app = InstrumentationRegistry.getInstrumentation().targetContext
         val directory = File(app.cacheDir, "tls-${UUID.randomUUID()}").apply { mkdirs() }
-        val crypto = MoonToneCrypto(object : ContextWrapper(app) { override fun getFilesDir() = directory })
+        val testContext = object : ContextWrapper(app) {
+            override fun getFilesDir() = directory
+            override fun getSharedPreferences(name: String, mode: Int) = super.getSharedPreferences("$name-${directory.name}", mode)
+        }
+        val crypto = MoonToneCrypto(testContext)
         val clientCertificate = crypto.getClientCertificate()!!
         val pair = KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair()
         val name = X500Name("CN=Sunshine")
@@ -51,18 +57,28 @@ class PairingTlsTest {
         }
         val context = SSLContext.getInstance("TLS").apply { init(km.keyManagers, arrayOf(trust), SecureRandom()) }
         val error = AtomicReference<Throwable?>()
+        val launchModes = java.util.Collections.synchronizedList(mutableListOf<String?>())
         try {
             (context.serverSocketFactory.createServerSocket(47984, 2, InetAddress.getByName("127.0.0.2")) as SSLServerSocket).use { server ->
                 server.needClientAuth = true
                 server.soTimeout = 10_000
                 val worker = kotlin.concurrent.thread {
                     try {
-                        repeat(2) {
+                        repeat(12) {
                             server.accept().use { client ->
                                 client.soTimeout = 5000
                                 val reader = client.getInputStream().bufferedReader()
+                                val uri = java.net.URI(reader.readLine().split(' ')[1])
                                 while (!reader.readLine().isNullOrEmpty()) { /* headers */ }
-                                val body = "<root><PairStatus>1</PairStatus><appversion>7.0.0</appversion><uniqueid>test-host</uniqueid></root>"
+                                val body = when (uri.path) {
+                                    "/applist" -> "<root><App><AppTitle>Desktop</AppTitle><ID>1</ID></App></root>"
+                                    "/launch" -> {
+                                        val args = uri.rawQuery.split('&').associate { it.substringBefore('=') to it.substringAfter('=') }
+                                        launchModes.add(args["localAudioPlayMode"])
+                                        "<root><sessionUrl0>rtsp://127.0.0.2:48010</sessionUrl0></root>"
+                                    }
+                                    else -> "<root><PairStatus>1</PairStatus><appversion>7.0.0</appversion><uniqueid>test-host</uniqueid></root>"
+                                }
                                 client.getOutputStream().write(("HTTP/1.1 200 OK\r\nContent-Length: ${body.toByteArray().size}\r\nConnection: close\r\n\r\n" + body).toByteArray())
                                 client.getOutputStream().flush()
                             }
@@ -72,6 +88,12 @@ class PairingTlsTest {
                 try {
                     val pairing = MoonTonePairing(crypto)
                     assertTrue(pairing.refreshServerInfo("127.0.0.2"))
+                    pairing.launchSession("127.0.0.2") // Existing default still requests no host playback.
+                    HostAudioPreferences.setPlayOnHost(testContext, "127.0.0.2", true)
+                    MultiSessionLauncher(testContext, crypto).prepare("127.0.0.2")
+                    HostAudioPreferences.setPlayOnHost(testContext, "127.0.0.2", false)
+                    MultiSessionLauncher(testContext, crypto).prepare("127.0.0.2")
+                    assertEquals(listOf("0", "1", "0"), launchModes)
                     assertArrayEquals(serverCertificate.encoded, crypto.getServerCertificate("127.0.0.2")!!.encoded)
                     assertTrue(pairing.refreshServerInfo("127.0.0.2"))
                 } finally { worker.join(12_000) }

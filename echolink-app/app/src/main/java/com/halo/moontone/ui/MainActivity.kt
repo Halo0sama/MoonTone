@@ -33,6 +33,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -48,6 +50,7 @@ import com.halo.moontone.data.DeviceDiscovery
 import com.halo.moontone.data.DiscoveredHost
 import com.halo.moontone.data.SavedHost
 import com.halo.moontone.data.SavedHosts
+import com.halo.moontone.data.HostAudioPreferences
 import com.halo.moontone.log.MoonToneLog
 import com.halo.moontone.multi.MultiConnState
 import com.halo.moontone.update.UpdateChecker
@@ -328,6 +331,10 @@ fun MoonToneUI(controller: MoonToneController, activity: MainActivity, localNetw
 
                         Spacer(Modifier.height(8.dp))
 
+                        HostAudioOption(controller.currentHost, active = true)
+
+                        Spacer(Modifier.height(8.dp))
+
                         // Microphone uplink switch
                         Card(
                             Modifier.fillMaxWidth(),
@@ -581,49 +588,54 @@ fun MoonToneUI(controller: MoonToneController, activity: MainActivity, localNetw
                                 containerColor = MaterialTheme.colorScheme.surfaceVariant
                             )
                         ) {
-                            Row(
-                                Modifier.fillMaxWidth().padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(Modifier.weight(1f)) {
-                                    Text(dev.name.ifBlank { dev.host }, fontWeight = FontWeight.Medium)
-                                    Text(dev.host, style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Row {
-                                        Text(
-                                            if (dev.online) "● 在线" else "○ 离线",
-                                            color = if (dev.online) Color(0xFF81C784) else Color(0xFF9E9E9E),
-                                            style = MaterialTheme.typography.labelSmall
-                                        )
-                                        if (dev.saved) {
-                                            Text("  ·  已保存",
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                style = MaterialTheme.typography.labelSmall)
+                            Column {
+                                Row(
+                                    Modifier.fillMaxWidth().padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(dev.name.ifBlank { dev.host }, fontWeight = FontWeight.Medium)
+                                        Text(dev.host, style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Row {
+                                            Text(
+                                                if (dev.online) "● 在线" else "○ 离线",
+                                                color = if (dev.online) Color(0xFF81C784) else Color(0xFF9E9E9E),
+                                                style = MaterialTheme.typography.labelSmall
+                                            )
+                                            if (dev.saved) {
+                                                Text("  ·  已保存",
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    style = MaterialTheme.typography.labelSmall)
+                                            }
                                         }
                                     }
+                                    TextButton(
+                                        onClick = {
+                                            host = dev.host
+                                            currentPin = null
+                                            connectAction(dev.host)
+                                        },
+                                        enabled = !isConnecting
+                                    ) { Text("连接") }
+                                    if (dev.saved) {
+                                        TextButton(
+                                            onClick = {
+                                                SavedHosts.remove(context, dev.host)
+                                                savedHosts = SavedHosts.load(context)
+                                            }
+                                        ) { Text("删除") }
+                                    } else {
+                                        TextButton(
+                                            onClick = {
+                                                SavedHosts.add(context, dev.name.ifBlank { "Mac" }, dev.host)
+                                                savedHosts = SavedHosts.load(context)
+                                            }
+                                        ) { Text("添加") }
+                                    }
                                 }
-                                TextButton(
-                                    onClick = {
-                                        host = dev.host
-                                        currentPin = null
-                                        connectAction(dev.host)
-                                    },
-                                    enabled = !isConnecting
-                                ) { Text("连接") }
-                                if (dev.saved) {
-                                    TextButton(
-                                        onClick = {
-                                            SavedHosts.remove(context, dev.host)
-                                            savedHosts = SavedHosts.load(context)
-                                        }
-                                    ) { Text("删除") }
-                                } else {
-                                    TextButton(
-                                        onClick = {
-                                            SavedHosts.add(context, dev.name.ifBlank { "Mac" }, dev.host)
-                                            savedHosts = SavedHosts.load(context)
-                                        }
-                                    ) { Text("添加") }
+                                Box(Modifier.padding(horizontal = 12.dp)) {
+                                    HostAudioOption(dev.host, active = multiDevices.any { it.host == dev.host })
                                 }
                             }
                         }
@@ -694,7 +706,7 @@ fun MoonToneUI(controller: MoonToneController, activity: MainActivity, localNetw
                                             if (md.state == MultiConnState.CONNECTED) {
                                                 TextButton(
                                                     onClick = { multiController.setMuted(md.slot, !md.muted) }
-                                                ) { Text(if (md.muted) "取消静音" else "静音") }
+                                                ) { Text(if (md.muted) "手机取消静音" else "手机静音") }
                                             }
                                             if (md.state == MultiConnState.ERROR) {
                                                 TextButton(
@@ -708,6 +720,7 @@ fun MoonToneUI(controller: MoonToneController, activity: MainActivity, localNetw
                                             ) { Text("断开") }
                                         }
                                     }
+                                    HostAudioOption(dev.host, active = md != null)
                                     if (md?.state == MultiConnState.CONNECTED) {
                                         Row(
                                             Modifier.fillMaxWidth(),
@@ -740,6 +753,9 @@ fun MoonToneUI(controller: MoonToneController, activity: MainActivity, localNetw
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(Modifier.height(12.dp))
+
+                    HostAudioOption(host.trim(), enabled = !isConnecting && !(showManual && rtspUrl.isNotBlank()),
+                        manualSession = showManual && rtspUrl.isNotBlank())
 
                     TextButton(onClick = { showMore = !showMore }) {
                         Text(if (showMore) "收起更多" else "更多")
@@ -825,6 +841,43 @@ fun MoonToneUI(controller: MoonToneController, activity: MainActivity, localNetw
             }
         }
         }
+}
+
+@Composable
+private fun HostAudioOption(host: String, active: Boolean = false, enabled: Boolean = true, manualSession: Boolean = false) {
+    val context = LocalContext.current
+    val preferences = remember(context) { HostAudioPreferences.preferences(context) }
+    var playOnHost by remember(host) { mutableStateOf(HostAudioPreferences.playOnHost(context, host)) }
+    DisposableEffect(preferences, host) {
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == host || key == null) playOnHost = HostAudioPreferences.playOnHost(context, host)
+        }
+        preferences.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("主机同时播放声音", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                when {
+                    manualSession -> "手动会话请在发起端设置主机声音"
+                    active -> "下次连接或重连生效；手机静音独立控制"
+                    else -> "打开后，电脑和手机同时播放"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(
+            checked = playOnHost,
+            enabled = enabled && host.isNotBlank(),
+            onCheckedChange = {
+                playOnHost = it
+                HostAudioPreferences.setPlayOnHost(context, host, it)
+            },
+            modifier = Modifier.semantics { contentDescription = "主机同时播放声音：$host" }
+        )
+    }
 }
 
 @Composable

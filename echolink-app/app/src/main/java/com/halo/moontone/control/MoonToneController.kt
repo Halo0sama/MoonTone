@@ -9,6 +9,7 @@ import com.halo.moontone.audio.StreamKeepAlive
 import com.halo.moontone.connection.MoonToneConnection
 import com.halo.moontone.connection.MoonToneState
 import com.halo.moontone.data.HostCapabilities
+import com.halo.moontone.data.HostAudioPreferences
 import com.halo.moontone.data.SavedHosts
 import com.limelight.binding.audio.AndroidAudioRenderer
 import com.halo.moontone.connection.MoonTonePairing
@@ -132,7 +133,7 @@ class MoonToneController(private val app: MoonToneApp) {
         val useAudioOnly = pairing.serverAdvertisesAudioOnly ||
             HostCapabilities.audioOnly(app, host, uid)
         try {
-            pairing.launchSession(host, useAudioOnly)
+            pairing.launchSession(host, useAudioOnly, playAudioOnHost = HostAudioPreferences.playOnHost(app, host))
         } catch (e: Exception) {
             // Dummy-video launch against the MoonTone-patched host fails with a
             // 503 (its video probe is intentionally broken). Re-learn the host
