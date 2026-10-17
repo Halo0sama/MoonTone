@@ -6,9 +6,9 @@ internal class StereoDriftBuffer(private val poll: () -> ShortArray?) {
     private var pos = 0
     private var adjust = 0.0
 
-    fun updateAdjustment(queueSize: Int) {
-        if (queueSize > 24) adjust += 0.05
-        else if (queueSize < 8) adjust -= 0.05
+    fun updateAdjustment(queuedMs: Int, targetMs: Int = 40) {
+        if (queuedMs > targetMs + 10) adjust += 0.05
+        else if (queuedMs < targetMs - 10) adjust -= 0.05
         adjust = adjust.coerceIn(-2.0, 2.0)
     }
 

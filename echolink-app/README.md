@@ -27,6 +27,7 @@ Debug APK：`app/build/outputs/apk/debug/app-debug.apk`。Release 构建命令�
 - `multi/MultiConnectionManager.kt`：Worker 槽位、LocalSocket 生命周期。
 - `multi/AudioMixer.kt` / `StereoDriftBuffer.kt`：PCM 接收、立体声漂移补偿、混音。
 - `audio/MoonToneMicrophoneService.kt`：麦克风前台服务。
+- `audio/AdaptivePcmBuffer.kt` / `PlaybackBufferTuner.kt`：单路和混音共用的抖动缓冲、平滑时间校正及 AudioTrack 有效缓冲调节。
 - `ui/MainActivity.kt`：Compose 界面、运行时权限和设备列表。
 
-单路播放和多路混音是两条现有管线，自动延迟控制目前接在单路播放器上。不要把源码中的缓冲参数直接当作实测端到端延迟。
+单路播放和多路混音共用自适应延迟策略；`AdaptiveLatencyController` 仅采集单路调试状态。不要把源码中的缓冲参数直接当作实测端到端延迟。详见[延迟优化记录](../docs/LATENCY.md)。

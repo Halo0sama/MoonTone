@@ -4,16 +4,17 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import android.os.Build
+import com.halo.moontone.audio.AdaptivePcmBuffer
+import com.halo.moontone.audio.PlaybackBufferTuner
 import com.halo.moontone.log.MoonToneLog
 import java.io.InputStream
-import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.concurrent.thread
 
 /** Reads PCM frames from one worker's LocalSocket into a bounded queue. */
 class PcmSource(private val input: InputStream) {
-    // 48 frames * 5ms = 240ms max buffered latency per source.
-    private val queue = ArrayBlockingQueue<ShortArray>(48)
+    private val queue = AdaptivePcmBuffer(PcmProtocol.SAMPLE_RATE, PcmProtocol.CHANNELS)
     @Volatile
     private var running = false
     private var reader: Thread? = null
@@ -35,7 +36,8 @@ class PcmSource(private val input: InputStream) {
         if (running) return
         running = true
         stoppedByUser = false
-        reader = thread {
+        reader = thread(name = "moontone-pcm-reader") {
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO)
             var firstFrame = true
             try {
                 while (running) {
@@ -44,11 +46,7 @@ class PcmSource(private val input: InputStream) {
                         firstFrame = false
                         onFirstFrame?.invoke()
                     }
-                    if (!queue.offer(frame)) {
-                        // Main mixer is behind; drop oldest to keep latency low.
-                        queue.poll()
-                        queue.offer(frame)
-                    }
+                    queue.offer(frame)
                 }
             } catch (e: Exception) {
                 MoonToneLog.w("PcmSource", "reader stopped: ${e.message}")
@@ -63,7 +61,8 @@ class PcmSource(private val input: InputStream) {
 
     fun poll(): ShortArray? = queue.poll()
 
-    fun size(): Int = queue.size
+    val queuedMs: Int get() = queue.queuedMs
+    val targetMs: Int get() = queue.targetMs
 
     fun stop() {
         stoppedByUser = true
@@ -97,12 +96,13 @@ class AudioMixer(private val context: Context) {
             AudioFormat.CHANNEL_OUT_STEREO,
             AudioFormat.ENCODING_PCM_16BIT
         )
-        val t = AudioTrack.Builder()
+        val attributes = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_GAME)
+            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) attributes.setFlags(AudioAttributes.FLAG_LOW_LATENCY)
+        val builder = AudioTrack.Builder()
             .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .build()
+                attributes.build()
             )
             .setAudioFormat(
                 AudioFormat.Builder()
@@ -112,8 +112,12 @@ class AudioMixer(private val context: Context) {
                     .build()
             )
             .setTransferMode(AudioTrack.MODE_STREAM)
-            .setBufferSizeInBytes(maxOf(minBuf, (PcmProtocol.SAMPLE_RATE / 200 * PcmProtocol.CHANNELS) * 2 * 24)) // ~120ms
-            .build()
+            // Reserve capacity for recovery; the effective write limit starts
+            // at 30ms, rather than filling the entire 120ms allocation.
+            .setBufferSizeInBytes(maxOf(minBuf, PcmProtocol.SAMPLE_RATE * PcmProtocol.CHANNELS * 2 * 120 / 1000))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) builder.setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
+        val t = builder.build()
+        val tuner = PlaybackBufferTuner(t, PcmProtocol.SAMPLE_RATE)
         try { t.play() } catch (e: Exception) { t.release(); throw e }
         track = t
         running = true
@@ -132,7 +136,7 @@ class AudioMixer(private val context: Context) {
                         sourceOut.fill(0)
                         val hasData = drifter.read(sourceOut)
                         hadData = hadData || hasData
-                        drifter.updateAdjustment(source.size())
+                        drifter.updateAdjustment(source.queuedMs, source.targetMs)
                         val gain = source.volume
                         if (!hasData || gain <= 0f) continue
                         contributors++
@@ -145,6 +149,7 @@ class AudioMixer(private val context: Context) {
                             val n = t.write(mixed, written, mixed.size - written)
                             if (n <= 0) break
                             written += n
+                            tuner.onWrite()
                         }
                     } else {
                         Thread.sleep(2)

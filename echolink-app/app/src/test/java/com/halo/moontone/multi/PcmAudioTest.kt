@@ -45,7 +45,7 @@ class PcmAudioTest {
     }
 
     @Test fun repeatedStereoCorrectionsNeverSwapChannels() {
-        for (queueSize in listOf(0, 48)) {
+        for (queueSize in listOf(0, 200)) {
             val source = StereoDriftBuffer { ShortArray(480) { if (it % 2 == 0) 12000 else -9000 } }
             val out = ShortArray(480)
             repeat(2000) {

@@ -14,52 +14,21 @@ import com.limelight.LimeLog;
 import com.limelight.nvstream.av.audio.AudioRenderer;
 import com.limelight.nvstream.jni.MoonBridge;
 
-import java.util.ArrayDeque;
+import com.halo.moontone.audio.AdaptivePcmBuffer;
+import com.halo.moontone.audio.PlaybackBufferTuner;
 
-/**
- * Moonlight-Android's stock audio renderer with a MoonTone jitter buffer.
- *
- * Upstream feeds AudioTrack directly from the decode callback, so the buffer
- * against network gaps is only whatever clock drift happens to accumulate
- * (measured 25-135ms on a campus WiFi network with 100-500ms airtime bursts),
- * which produces constant audible stutter no matter how high the drop
- * threshold is set — the threshold caps the queue but nothing ever FILLS it.
- *
- * This renderer adds a proper pre-roll jitter buffer:
- *  - decoded PCM is queued, and a writer thread only starts playback after
- *    the queue holds targetBufferMs of audio;
- *  - after a stall drains the queue, it re-primes with a shorter depth
- *    (RE_PRIME_MS) so playback resumes stably instead of ticking;
- *  - targetBufferMs is driven by AdaptiveLatencyController (40-600ms);
- *  - retains local mute and reconnect-safe null guards (MoonTone reuses the
- *    renderer across sessions, upstream assumes a one-shot lifecycle).
- */
+/** Direct playback with an adaptive, time-bounded decoded PCM queue. */
 public class AndroidAudioRenderer implements AudioRenderer {
 
     private final Context context;
     private final boolean enableAudioFx;
 
-    private AudioTrack track;
-
-    // ── Jitter buffer state ─────────────────────────────────
+    private volatile AudioTrack track;
     private final Object queueLock = new Object();
-    private final ArrayDeque<short[]> queue = new ArrayDeque<>();
-    private long queuedFrames = 0;
-    private int sampleRateHz = 48000;
-    private int channelCount = 2;
-    private volatile boolean running = false;
-    private volatile boolean primed = false;
+    private volatile AdaptivePcmBuffer pcmBuffer = new AdaptivePcmBuffer(48000, 2);
+    private volatile boolean running;
     private Thread writerThread;
-
-    // Coverage target in ms (AdaptiveLatencyController, 40-600).
-    private volatile int targetBufferMs = 600;
-    // Depth to accumulate before (re)starting playback. Full target on session
-    // start; a shorter depth after a stall so audio returns quickly.
-    private volatile int primeDepthMs = 600;
-    // Re-prime depth after a stall: shorter so audio returns quickly.
-    private static final int RE_PRIME_MS = 200;
-    // Absolute queue bound (memory safety) — 1s of 48kHz stereo 16-bit ≈ 190KB.
-    private static final int HARD_MAX_BUFFER_MS = 1000;
+    private long lastUnderrunTotal;
 
     // Local mute: keeps consuming/decoding audio but silences the AudioTrack.
     private volatile boolean muted = false;
@@ -69,50 +38,26 @@ public class AndroidAudioRenderer implements AudioRenderer {
         this.enableAudioFx = enableAudioFx;
     }
 
-    public void setPendingThresholdMs(int ms) {
-        this.targetBufferMs = ms;
-    }
+    public int getTargetBufferMs() { return pcmBuffer.getTargetMs(); }
+    public int getQueuedMs() { return pcmBuffer.getQueuedMs(); }
+    public int getAndResetDropCount() { return pcmBuffer.takeDropCount(); }
 
-    /** Current jitter-buffer depth in ms (real gap coverage). */
-    public int getQueuedMs() {
-        synchronized (queueLock) {
-            return (int) (queuedFrames * 1000L / sampleRateHz);
-        }
-    }
-
-    /** Frames dropped by the queue hard cap since the last call. */
-    public int getAndResetDropCount() {
-        synchronized (queueLock) {
-            int v = (int) dropCount;
-            dropCount = 0;
-            return v;
-        }
-    }
-
-    /** Returns AudioTrack underruns + stall events since the last call. */
     public int getAndResetUnderrunCount() {
-        long stalls;
+        int stalls = pcmBuffer.takeStallCount();
         synchronized (queueLock) {
-            stalls = stallCount;
-            stallCount = 0;
+            if (track != null) {
+                long current = track.getUnderrunCount();
+                stalls += (int) Math.max(0, current - lastUnderrunTotal);
+                lastUnderrunTotal = current;
+            }
         }
-        long trackUnderruns = 0;
-        if (track != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            long current = track.getUnderrunCount();
-            trackUnderruns = current - lastUnderrunTotal;
-            lastUnderrunTotal = current;
-        }
-        return (int) (stalls + trackUnderruns);
+        return stalls;
     }
-
-    private long stallCount = 0;
-    private long dropCount = 0;
-    private long lastUnderrunTotal = 0;
 
     public void setMuted(boolean muted) {
         this.muted = muted;
-        if (track != null) {
-            track.setVolume(muted ? 0f : 1f);
+        synchronized (queueLock) {
+            if (track != null) track.setVolume(muted ? 0f : 1f);
         }
     }
 
@@ -157,8 +102,10 @@ public class AndroidAudioRenderer implements AudioRenderer {
 
     @Override
     public int setup(MoonBridge.AudioConfiguration audioConfiguration, int sampleRate, int samplesPerFrame) {
+        cleanup();
         int channelConfig;
         int bytesPerFrame;
+        PlaybackBufferTuner tuner = null;
 
         switch (audioConfiguration.channelCount)
         {
@@ -184,63 +131,17 @@ public class AndroidAudioRenderer implements AudioRenderer {
 
         LimeLog.info("Audio channel config: "+String.format("0x%X", channelConfig));
 
-        channelCount = audioConfiguration.channelCount;
-        sampleRateHz = sampleRate;
+        pcmBuffer = new AdaptivePcmBuffer(sampleRate, audioConfiguration.channelCount);
         bytesPerFrame = audioConfiguration.channelCount * samplesPerFrame * 2;
 
-        // We're not supposed to request less than the minimum
-        // buffer size for our buffer, but it appears that we can
-        // do this on many devices and it lowers audio latency.
-        // We'll try the small buffer size first and if it fails,
-        // use the recommended larger buffer size.
+        // Reserve recovery capacity. PlaybackBufferTuner limits effective
+        // write-ahead independently, so capacity does not imply 120ms latency.
 
-        for (int i = 0; i < 4; i++) {
-            boolean lowLatency;
-            int bufferSize;
-
-            // We will try:
-            // 1) Small buffer, low latency mode
-            // 2) Large buffer, low latency mode
-            // 3) Small buffer, standard mode
-            // 4) Large buffer, standard mode
-
-            switch (i) {
-                case 0:
-                case 1:
-                    lowLatency = true;
-                    break;
-                case 2:
-                case 3:
-                    lowLatency = false;
-                    break;
-                default:
-                    // Unreachable
-                    throw new IllegalStateException();
-            }
-
-            switch (i) {
-                case 0:
-                case 2:
-                    // Upstream uses bytesPerFrame * 2 (~10 ms), which leaves no
-                    // scheduling slack; *4 keeps latency low while stable.
-                    bufferSize = bytesPerFrame * 4;
-                    break;
-
-                case 1:
-                case 3:
-                    // Try the larger buffer size (~40 ms)
-                    bufferSize = Math.max(AudioTrack.getMinBufferSize(sampleRate,
-                            channelConfig,
-                            AudioFormat.ENCODING_PCM_16BIT),
-                            bytesPerFrame * 8);
-
-                    // Round to next frame
-                    bufferSize = (((bufferSize + (bytesPerFrame - 1)) / bytesPerFrame) * bytesPerFrame);
-                    break;
-                default:
-                    // Unreachable
-                    throw new IllegalStateException();
-            }
+        for (int i = 0; i < 2; i++) {
+            boolean lowLatency = i == 0;
+            int bufferSize = Math.max(AudioTrack.getMinBufferSize(sampleRate, channelConfig,
+                    AudioFormat.ENCODING_PCM_16BIT), sampleRate * audioConfiguration.channelCount * 2 * 120 / 1000);
+            bufferSize = ((bufferSize + bytesPerFrame - 1) / bytesPerFrame) * bytesPerFrame;
 
             // Skip low latency options if hardware sample rate doesn't match the content
             if (AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_MUSIC) != sampleRate && lowLatency) {
@@ -255,6 +156,7 @@ public class AndroidAudioRenderer implements AudioRenderer {
 
             try {
                 track = createAudioTrack(channelConfig, sampleRate, bufferSize, lowLatency);
+                tuner = new PlaybackBufferTuner(track, sampleRate);
                 track.play();
 
                 // Successfully created working AudioTrack. We're done here.
@@ -280,54 +182,33 @@ public class AndroidAudioRenderer implements AudioRenderer {
         track.setVolume(muted ? 0f : 1f);
         lastUnderrunTotal = 0;
 
-        // Start the jitter-buffer writer (pre-rolls before first write).
-        synchronized (queueLock) {
-            queue.clear();
-            queuedFrames = 0;
-            primed = false;
-            primeDepthMs = targetBufferMs;
-            stallCount = 0;
-        }
-        startWriter();
-
+        startWriter(track, pcmBuffer, tuner);
         return 0;
     }
 
-    private void startWriter() {
-        // Defensive: never allow two writer threads to interleave writes on
-        // the same AudioTrack (that also manifests as loud static).
-        if (writerThread != null && writerThread.isAlive()) {
-            running = false;
-            try { writerThread.join(500); } catch (InterruptedException ignored) {}
-        }
+    private void startWriter(final AudioTrack sessionTrack, final AdaptivePcmBuffer buffer, final PlaybackBufferTuner tuner) {
         running = true;
         writerThread = new Thread(() -> {
             Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO);
-            LimeLog.info("Jitter buffer writer started, target=" + targetBufferMs + " ms");
-            while (running) {
-                short[] item;
-                synchronized (queueLock) {
-                    double depthMs = queuedFrames * 1000.0 / sampleRateHz;
-                    if (!primed && depthMs < primeDepthMs) {
-                        // Pre-roll (initial or after a stall): keep collecting.
-                        try { queueLock.wait(20); } catch (InterruptedException ignored) {}
-                        continue;
-                    }
-                    primed = true;
-                    item = queue.pollFirst();
+            try {
+                while (running && track == sessionTrack) {
+                    short[] item = buffer.poll();
                     if (item == null) {
-                        // Queue ran dry while playing: stall. Re-prime before
-                        // resuming so we don't tick frame-by-frame.
-                        primed = false;
-                        primeDepthMs = Math.min(targetBufferMs, RE_PRIME_MS);
-                        stallCount++;
-                        LimeLog.info("Audio jitter buffer starved; re-priming to " + primeDepthMs + " ms");
-                        try { queueLock.wait(20); } catch (InterruptedException ignored) {}
+                        Thread.sleep(2);
                         continue;
                     }
-                    queuedFrames -= item.length / channelCount;
+                    int written = 0;
+                    while (written < item.length && running && track == sessionTrack) {
+                        int count = sessionTrack.write(item, written, item.length - written);
+                        if (count <= 0) throw new IllegalStateException("AudioTrack write failed: " + count);
+                        written += count;
+                        tuner.onWrite();
+                    }
                 }
-                track.write(item, 0, item.length);
+            } catch (InterruptedException ignored) {
+                // Normal shutdown while waiting for decoded audio.
+            } catch (IllegalStateException e) {
+                if (running && track == sessionTrack) LimeLog.severe("Audio writer failed: " + e);
             }
         }, "MoonTone-AudioWriter");
         writerThread.start();
@@ -335,29 +216,8 @@ public class AndroidAudioRenderer implements AudioRenderer {
 
     @Override
     public void playDecodedAudio(short[] audioData) {
-        if (!running || track == null) {
-            // The renderer can be cleaned up while a reconnect is in progress;
-            // ignore any audio that arrives after the track has been released.
-            return;
-        }
-
         synchronized (queueLock) {
-            // Hard memory bound only. The depth is real gap coverage: late
-            // burst packets refill it for free, so never tie this cap to the
-            // (decaying) adaptive threshold.
-            if (queuedFrames * 1000.0 / sampleRateHz > HARD_MAX_BUFFER_MS) {
-                dropCount++;
-                LimeLog.info("Jitter buffer full, dropping frame");
-                return;
-            }
-            // IMPORTANT: moonlight-common-c decodes into ONE reused global
-            // jshortArray (DecodedAudioBuffer in callbacks.c) and hands the
-            // same array to every callback. Deferring the AudioTrack.write
-            // therefore requires our own copy, or every queued frame reads
-            // whatever the decoder wrote most recently (harsh static).
-            queue.add(audioData.clone());
-            queuedFrames += audioData.length / channelCount;
-            queueLock.notifyAll();
+            if (running && track != null) pcmBuffer.offer(audioData);
         }
     }
 
@@ -387,28 +247,21 @@ public class AndroidAudioRenderer implements AudioRenderer {
 
     @Override
     public void cleanup() {
-        running = false;
+        final AudioTrack oldTrack;
         synchronized (queueLock) {
-            queue.clear();
-            queuedFrames = 0;
-            queueLock.notifyAll();
+            running = false;
+            oldTrack = track;
+            track = null;
         }
-        try {
-            if (writerThread != null) {
-                writerThread.join(500);
-            }
-        } catch (InterruptedException ignored) {}
-        writerThread = null;
-
-        if (track == null) {
-            return;
+        // Wake a blocking write before joining its owner thread.
+        if (oldTrack != null) {
+            try { oldTrack.pause(); oldTrack.flush(); } catch (IllegalStateException ignored) {}
         }
-
-        // Immediately drop all pending data
-        track.pause();
-        track.flush();
-
-        track.release();
-        track = null;
+        if (writerThread != null) {
+            writerThread.interrupt();
+            try { writerThread.join(500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            writerThread = null;
+        }
+        if (oldTrack != null) oldTrack.release();
     }
 }

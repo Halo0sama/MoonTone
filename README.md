@@ -90,7 +90,7 @@ python3 tools/mic_receiver.py
 
 ## Known Issues
 
-- **Multi-device latency is higher than single-device.** To eliminate crackle caused by two independent 48 kHz clocks, each source uses a larger jitter buffer. This increases end-to-end latency when multiple devices are connected. Single-device latency is much lower.
+- **Latency depends on network jitter and the output route.** Direct and mixed playback share adaptive buffering; recurring Wi-Fi gaps retain more protection, while stable streams gradually catch up. Bluetooth output adds its own buffering. See [latency tuning and verification](docs/LATENCY.md).
 - mDNS discovery does not cross subnets. A host on a different subnet must be added manually by IP.
 - The official macOS Sunshine prebuilt crashes on session start due to a tray thread-safety bug; use `system_tray = false` or the source-built version with the tray fix.
 - Windows Sunshine may not send video for very small dummy resolutions; the app uses `640x480@1fps` as a compatible dummy stream.
@@ -193,7 +193,7 @@ python3 tools/mic_receiver.py
 
 ## 已知问题
 
-- **多设备连接延迟偏大**：为了消除两路独立 48kHz 时钟不同步导致的嘶啦声，每路使用了较大的抖动缓冲，因此多设备同时连接时端到端延迟会比单设备高；单设备延迟明显更低。
+- **延迟取决于网络抖动和输出链路**：单路和多路共用自适应缓冲，反复出现的 Wi-Fi 尖峰保留保护余量，稳定后逐步追近实时；蓝牙输出另有自身缓冲。见[延迟优化与验证](docs/LATENCY.md)。
 - mDNS 发现不跨子网：不同子网的主机需要手动填 IP 连接。
 - macOS 官方预编译版 Sunshine 会因托盘线程安全问题在会话启动时崩溃；可设置 `system_tray = false`，或使用带托盘修复的源码构建版。
 - Windows Sunshine 对极小虚拟分辨率可能不发送视频；App 使用 `640x480@1fps` 作为兼容虚拟流。

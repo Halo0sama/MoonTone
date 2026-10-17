@@ -58,7 +58,7 @@ moonlight-common-c 使用进程全局状态。每个 Worker 独占一套 native 
 
 PCM 为 48kHz、双声道、16bit little-endian；包头 magic/seq/rate/channels/byteLength 为 big-endian。读取端拒绝错误格式、不完整包和超过 120ms Opus 包上限的负载。任何丢弃/插入采样操作都必须保持完整双声道帧。
 
-单路保留自动延迟调节；多路保留原有 48 包队列和约 120ms AudioTrack 配置。本轮修复声道和生命周期，不把这些缓冲参数当成“已降低实测延迟”的证据。
+2026-10-16 首轮仅修复声道和生命周期。2026-10-18 已将单路和多路改为共用自适应 PCM 缓冲，区分 AudioTrack 的分配容量与有效写入上限，详见[延迟优化记录](LATENCY.md)。这些参数仍不能作为实测端到端延迟。
 
 Sunshine 使用自签名证书，不能直接切换成系统 CA 校验。新配对先用 PIN challenge 验证服务端证书后固定。旧版本没有保存服务端证书，因此首次成功 mTLS 请求采用一次 TOFU 迁移，之后拒绝证书变化；重装 Sunshine 或证书轮换时需重新配对。首次迁移仍需要可信局域网环境。
 
