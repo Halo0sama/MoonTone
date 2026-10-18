@@ -40,7 +40,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
@@ -1487,28 +1486,17 @@ private fun StatusDot(color: Color) {
 /** Crescent moon with two tiny stars, drawn from the theme's tonal colours. */
 @Composable
 private fun MoonGlyph(size: androidx.compose.ui.unit.Dp) {
-    val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     val glow = MaterialTheme.colorScheme.secondary
     val cutout = MaterialTheme.colorScheme.primaryContainer
-    val sparkle = if (dark) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.tertiaryContainer
     Canvas(modifier = Modifier.size(size)) {
         val min = this.size.minDimension
         val r = min / 2f
         drawCircle(color = glow, radius = r, center = center)
+        // Offset circle carves the crescent; keep it clean without extra sparkle dots.
         drawCircle(
             color = cutout,
             radius = r * 0.84f,
             center = Offset(center.x + r * 0.44f, center.y - r * 0.20f),
-        )
-        drawCircle(
-            color = sparkle,
-            radius = r * 0.075f,
-            center = Offset(this.size.width * 0.22f, this.size.height * 0.24f),
-        )
-        drawCircle(
-            color = sparkle,
-            radius = r * 0.045f,
-            center = Offset(this.size.width * 0.16f, this.size.height * 0.42f),
         )
     }
 }
