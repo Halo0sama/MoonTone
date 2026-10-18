@@ -122,7 +122,7 @@ internal fun SettingsScreen(
                         CardDivider()
                         SettingsToggle(
                             title = "跟随壁纸动态取色",
-                            detail = "Android 12+ 使用系统壁纸配色；关闭时使用 MoonTone 品牌配色。",
+                            detail = "关闭时使用 MoonTone 品牌配色。",
                             checked = dynamicColor,
                             icon = Icons.Rounded.Wallpaper,
                             iconTint = MaterialTheme.colorScheme.primaryContainer,

@@ -28,7 +28,7 @@ Stream audio from multiple PCs to your Android phone at the same time, mix it on
 - Adaptive audio buffering for single-device playback and multi-device mixing
 - Audio format and system output information
 - Microphone uplink (UDP 48100 back to PC)
-- Material 3 Expressive redesign: Aurora Night palette, expressive type/shape/motion, brand light+dark themes, optional Material You dynamic colours & theme mode
+- Material 3 Expressive redesign: Aurora Night palette, expressive type/shape/motion, brand light+dark themes, Material You dynamic colours (on by default) & theme mode
 - In-app update check (GitHub Releases, prompts on new version)
 
 ## Architecture
@@ -135,7 +135,7 @@ python3 tools/mic_receiver.py
 - 单设备播放自动调节延迟缓冲
 - 实时音质规格显示
 - 麦克风上行（UDP 48100 回传 PC）
-- Material 3 Expressive 全新视觉：极光夜色配色、表现力字体/形状/动效、品牌浅色+深色主题，可选 Material You 动态取色与主题模式
+- Material 3 Expressive 全新视觉：极光夜色配色、表现力字体/形状/动效、品牌浅色+深色主题，Material You 动态取色（默认开启）与主题模式
 - 应用内自动检查更新（GitHub Releases，新版本弹窗提示）
 
 ## 架构

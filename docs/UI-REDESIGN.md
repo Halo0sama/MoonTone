@@ -1,6 +1,6 @@
 # MoonTone UI Redesign — Material 3 Expressive
 
-> Status: implemented 2026-10-18, brand light/dark + optional dynamic colour verified on the
+> Status: implemented 2026-10-18, brand light/dark + dynamic colour verified on the
 > `moontone37` emulator (Android 17, 1080×2400); independent visual QA pass completed (no blockers).
 > Scope: Android app in `echolink-app/` (Jetpack Compose, material3 1.5.0-alpha29).
 > Ownership: see **File ownership** at the bottom so parallel work never touches the same file.
@@ -46,7 +46,8 @@ Rules:
 - Cards use `surfaceContainerLow`; sheets/dialogs `surfaceContainerHigh`; inputs `surfaceContainer`.
 - Status colour language: blue = connected/online/positive; coral/tertiary = attention
   (host audio exception, mic uplink); error roles only for real errors.
-- Dynamic colour (Material You) replaces the whole scheme when enabled in Settings → 外观.
+- Dynamic colour (Material You) replaces the whole scheme and is **on by default**;
+  it can be switched off in Settings → 外观 to use the brand palette.
 
 ## 3. Type
 
@@ -124,7 +125,7 @@ must reuse the components above for section headers, cards, icon badges, setting
 - `AppPreferences`: `themeMode(context)`, `setThemeMode(context, storageValue)`,
   `dynamicColor(context)`, `setDynamicColor(context, enabled)`.
 - Settings → 外观 group (implemented by ui-settings): theme mode choice
-  (跟随系统 / 浅色 / 深色) + 跟随壁纸动态取色 switch (Android 12+ only).
+  (跟随系统 / 浅色 / 深色) + 跟随壁纸动态取色 switch (Android 12+ only, on by default).
 
 ## 8. File ownership (avoid overlapping writes)
 

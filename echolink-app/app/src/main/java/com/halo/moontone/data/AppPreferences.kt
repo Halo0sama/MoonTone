@@ -33,8 +33,8 @@ object AppPreferences {
         preferences(context).edit().putString(KEY_THEME_MODE, storageValue).apply()
     }
 
-    /** Follow the wallpaper's Material You palette instead of the MoonTone brand palette. */
-    fun dynamicColor(context: Context) = preferences(context).getBoolean(KEY_DYNAMIC_COLOR, false)
+    /** Follow the wallpaper's Material You palette instead of the MoonTone brand palette. On by default. */
+    fun dynamicColor(context: Context) = preferences(context).getBoolean(KEY_DYNAMIC_COLOR, true)
     fun setDynamicColor(context: Context, enabled: Boolean) {
         preferences(context).edit().putBoolean(KEY_DYNAMIC_COLOR, enabled).apply()
     }

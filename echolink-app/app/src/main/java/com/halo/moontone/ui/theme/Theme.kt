@@ -38,7 +38,7 @@ enum class ThemeMode(val storageValue: String) {
 @Composable
 fun MoonToneTheme(
     themeMode: ThemeMode = ThemeMode.SYSTEM,
-    dynamicColor: Boolean = false,
+    dynamicColor: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
