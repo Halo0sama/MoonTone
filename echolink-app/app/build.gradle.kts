@@ -14,8 +14,8 @@ android {
         // material 1.14（M3 Expressive 窗口主题）与 material3-ripple 1.5 均要求 minSdk ≥ 24
         minSdk = 24
         targetSdk = 37
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {

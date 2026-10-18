@@ -1,5 +1,15 @@
 # 发布构建记录
 
+## v0.4.0
+
+版本号为 `0.4.0`，Android `versionCode` 为 `4`。源码以 Git 标签 `v0.4.0` 对应；发布附件包含 arm64 APK、源码归档与 `SHA256SUMS.txt`。
+
+本轮为 Material 3 Expressive 界面重构，沿用既有发布流程：使用 JDK 21、SDK 37、Build Tools 36.0.0、NDK 27.0.12077973、Gradle 9.8.0、AGP 9.4.1 构建 Release APK，通过 Android SDK 的 `zipalign` 与 `apksigner` 完成对齐、签名与验证。签名身份沿用 v0.2.0/v0.3.0 的本地 Android debug keystore；发布的是 `debuggable=false` 的 Release 构建，不是 Debug APK。
+
+发布前验证：34 项 JVM 单元测试通过，Lint 0 errors，Debug/Release 构建通过；在 Android 17 模拟器与实体 Android 17 arm64 手机上验证浅色/深色、动态取色、主题切换、设备分组、底部弹层等界面状态。本轮未重新执行 Android instrumented 测试与真实 Sunshine 多机串流的端到端听感测试，相关限制见[发布说明](releases/v0.4.0.md)。
+
+签名、版本号、arm64 ABI、不可调试标志与 ZIP 对齐核验记录保存在本地 `echolink-app/app/build/reports/release-v0.4.0/`，不进入仓库或发布附件。
+
 ## v0.3.0
 
 版本号为 `0.3.0`，Android `versionCode` 为 `3`。源码以 Git 标签 `v0.3.0` 对应；发布附件包含 arm64 APK、源码归档与 `SHA256SUMS.txt`。

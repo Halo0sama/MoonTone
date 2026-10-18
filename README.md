@@ -5,7 +5,7 @@ Stream audio from multiple PCs to your Android phone at the same time, mix it on
 > Pure-audio experience: a tiny dummy video stream keeps the session alive; nothing is shown on screen.
 > Multi-device simultaneous streaming: each connection runs in its own Android process, the main process mixes PCM.
 
-[Download v0.3.0](https://github.com/Halo0sama/MoonTone/releases/tag/v0.3.0) · [Release notes](docs/releases/v0.3.0.md) · [Third-party notices](THIRD_PARTY_NOTICES.md)
+[Download v0.4.0](https://github.com/Halo0sama/MoonTone/releases/tag/v0.4.0) · [Release notes](docs/releases/v0.4.0.md) · [Third-party notices](THIRD_PARTY_NOTICES.md)
 
 ## Screenshots
 
