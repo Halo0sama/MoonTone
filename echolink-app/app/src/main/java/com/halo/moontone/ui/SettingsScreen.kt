@@ -34,7 +34,6 @@ import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Notifications
-import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Speaker
@@ -114,7 +113,6 @@ internal fun SettingsScreen(
             contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            item { SettingsIntro() }
             item {
                 SettingsGroup("外观") {
                     ThemeModeSelector(selected = themeMode) { mode ->
@@ -268,34 +266,6 @@ internal fun SettingsScreen(
     }
 }
 
-/** One bold block at the top of Settings so the screen has a clear expressive hero. */
-@Composable
-private fun SettingsIntro() {
-    MoonToneCard(
-        containerColor = MaterialTheme.colorScheme.primaryContainer,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            IconBadge(
-                icon = Icons.Rounded.Palette,
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
-                size = 48.dp,
-            )
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = "外观与播放",
-                    style = MaterialTheme.typography.titleLargeEmphasized,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                )
-            }
-        }
-    }
-}
 
 /**
  * Three expressive pills acting as a radio group for the app theme, laid out horizontally
