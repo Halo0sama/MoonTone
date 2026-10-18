@@ -9,7 +9,7 @@
 
 MoonTone is a PC→phone audio streaming app. The redesign shifts it from a settings-like
 utility list to a **music-product feel**: one bold status block, oversized emphasized type,
-violet/mint colour blocking, very round shapes and springy motion. The app is used at night,
+violet/blue colour blocking, very round shapes and springy motion. The app is used at night,
 so dark mode is treated as a first-class look and the brand palette is tuned for both themes.
 
 Design pillars (from Material 3 Expressive):
@@ -22,8 +22,8 @@ Design pillars (from Material 3 Expressive):
 
 ## 2. Colour — “Aurora Night” palette
 
-Seeds: violet `#6C5CE7` (primary/moonlight), mint `#00BFA6` (secondary/audio signal),
-coral `#FF8A65` (tertiary/warmth). Neutral surfaces are violet-tinted lavender.
+Seeds: violet `#6C5CE7` (primary/moonlight), blue `#205FA8` (secondary/audio signal —
+no green accents), coral `#FF8A65` (tertiary/warmth). Neutral surfaces are violet-tinted lavender.
 
 Key roles (full table in `ui/theme/Color.kt`):
 
@@ -32,7 +32,7 @@ Key roles (full table in `ui/theme/Color.kt`):
 | primary | `#5C54A8` | `#C9C2FF` |
 | primaryContainer (hero) | `#C4BDFF` | `#4A3F91` |
 | onPrimaryContainer | `#2E2378` | `#E4DEFF` |
-| secondaryContainer (signal/mint) | `#71F2D9` | `#005146` |
+| secondaryContainer (signal/blue) | `#9CC2FF` | `#1C4A7D` |
 | tertiaryContainer (warm/coral) | `#FFAD94` | `#7A2C12` |
 | surface | `#FEF7FF` | `#0F0C16` |
 | surfaceContainerLow (cards) | `#F8F1FE` | `#161120` |
@@ -44,7 +44,7 @@ Rules:
 - Large blocks use `primaryContainer` / `secondaryContainer` / `tertiaryContainer` with their
   matching `on*Container` content colour. Never put `onSurface` text on a saturated container.
 - Cards use `surfaceContainerLow`; sheets/dialogs `surfaceContainerHigh`; inputs `surfaceContainer`.
-- Status colour language: mint = connected/online/positive; coral/tertiary = attention
+- Status colour language: blue = connected/online/positive; coral/tertiary = attention
   (host audio exception, mic uplink); error roles only for real errors.
 - Dynamic colour (Material You) replaces the whole scheme when enabled in Settings → 外观.
 

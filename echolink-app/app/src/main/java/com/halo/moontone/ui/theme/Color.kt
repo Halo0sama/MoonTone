@@ -11,7 +11,7 @@ import androidx.compose.ui.graphics.Color
  * three brand seeds and then normalised so every role keeps a comfortable contrast pair:
  *
  *  - primary   violet  (#6C5CE7 seed)  — moonlight / brand
- *  - secondary mint    (#00BFA6 seed)  — audio signal / success
+ *  - secondary sky blue (#4FC3F7 seed) — audio signal / success (no green accents)
  *  - tertiary  coral   (#FF8A65 seed)  — warmth / alerts, host audio exceptions
  *  - neutrals          violet-tinted lavender greys
  *
@@ -28,10 +28,10 @@ val MoonToneLightColorScheme = lightColorScheme(
     primaryContainer = Color(0xFFC4BDFF),
     onPrimaryContainer = Color(0xFF2E2378),
     inversePrimary = Color(0xFFC9C2FF),
-    secondary = Color(0xFF00695C),
+    secondary = Color(0xFF205FA8),
     onSecondary = Color(0xFFFFFFFF),
-    secondaryContainer = Color(0xFF71F2D9),
-    onSecondaryContainer = Color(0xFF00594C),
+    secondaryContainer = Color(0xFF9CC2FF),
+    onSecondaryContainer = Color(0xFF002F53),
     tertiary = Color(0xFF9C4528),
     onTertiary = Color(0xFFFFFFFF),
     tertiaryContainer = Color(0xFFFFAD94),
@@ -63,10 +63,10 @@ val MoonToneLightColorScheme = lightColorScheme(
     primaryFixedDim = Color(0xFFC9C2FF),
     onPrimaryFixed = Color(0xFF24176D),
     onPrimaryFixedVariant = Color(0xFF42398C),
-    secondaryFixed = Color(0xFF8CF5E0),
-    secondaryFixedDim = Color(0xFF71F2D9),
-    onSecondaryFixed = Color(0xFF00201B),
-    onSecondaryFixedVariant = Color(0xFF00594C),
+    secondaryFixed = Color(0xFFCFE3FF),
+    secondaryFixedDim = Color(0xFF9CC2FF),
+    onSecondaryFixed = Color(0xFF001C33),
+    onSecondaryFixedVariant = Color(0xFF1C4A7D),
     tertiaryFixed = Color(0xFFFFDAD0),
     tertiaryFixedDim = Color(0xFFFFAD94),
     onTertiaryFixed = Color(0xFF3B0900),
@@ -81,10 +81,10 @@ val MoonToneDarkColorScheme = darkColorScheme(
     primaryContainer = Color(0xFF4A3F91),
     onPrimaryContainer = Color(0xFFE4DEFF),
     inversePrimary = Color(0xFF5C54A8),
-    secondary = Color(0xFF5FE9D2),
-    onSecondary = Color(0xFF00382F),
-    secondaryContainer = Color(0xFF005146),
-    onSecondaryContainer = Color(0xFF86F7E1),
+    secondary = Color(0xFFA9C9FF),
+    onSecondary = Color(0xFF0E2F55),
+    secondaryContainer = Color(0xFF1C4A7D),
+    onSecondaryContainer = Color(0xFFC9E0FF),
     tertiary = Color(0xFFFFB59E),
     onTertiary = Color(0xFF5A1904),
     tertiaryContainer = Color(0xFF7A2C12),
@@ -116,10 +116,10 @@ val MoonToneDarkColorScheme = darkColorScheme(
     primaryFixedDim = Color(0xFFC9C2FF),
     onPrimaryFixed = Color(0xFF24176D),
     onPrimaryFixedVariant = Color(0xFF42398C),
-    secondaryFixed = Color(0xFF8CF5E0),
-    secondaryFixedDim = Color(0xFF71F2D9),
-    onSecondaryFixed = Color(0xFF00201B),
-    onSecondaryFixedVariant = Color(0xFF00594C),
+    secondaryFixed = Color(0xFFCFE3FF),
+    secondaryFixedDim = Color(0xFF9CC2FF),
+    onSecondaryFixed = Color(0xFF001C33),
+    onSecondaryFixedVariant = Color(0xFF1C4A7D),
     tertiaryFixed = Color(0xFFFFDAD0),
     tertiaryFixedDim = Color(0xFFFFAD94),
     onTertiaryFixed = Color(0xFF3B0900),

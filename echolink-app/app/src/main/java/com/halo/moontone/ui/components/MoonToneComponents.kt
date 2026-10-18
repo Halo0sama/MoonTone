@@ -195,6 +195,18 @@ internal fun AnimatedWaveform(
         ),
         label = "phase",
     )
+    // Idle bars drift slowly. The phase must advance by a full 2*pi so sin() is continuous
+    // across the infinite-repeat loop; scaling the fast phase made the bars visibly jump.
+    val idleTransition = rememberInfiniteTransition(label = "waveformIdle")
+    val idlePhase by idleTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = (2f * Math.PI).toFloat(),
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 7000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "idlePhase",
+    )
     val activeFactor by animateFloatAsState(
         targetValue = if (active) 1f else 0f,
         animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec(),
@@ -220,7 +232,7 @@ internal fun AnimatedWaveform(
             val wave = abs(sin(phase + index * 0.95f))
             val level = 0.22f + 0.78f * wave
             // Idle bars keep a varied "equalizer at rest" silhouette instead of a flat line.
-            val idle = 0.14f + 0.34f * abs(sin(index * 1.15f + phase * 0.15f))
+            val idle = 0.14f + 0.34f * abs(sin(index * 1.15f + idlePhase))
             val barHeight = heightPx * (idle + (level - idle) * activeFactor)
             val x = index * (widthPx + gapPx)
             drawRoundRect(

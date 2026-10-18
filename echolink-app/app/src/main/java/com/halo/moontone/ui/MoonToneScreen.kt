@@ -689,7 +689,7 @@ private fun IdleHero() {
                     style = MaterialTheme.typography.headlineMediumEmphasized,
                 )
                 Text(
-                    text = "选择下方电脑开始串流，或通过 IP 手动连接。",
+                    text = "从下方选择一台电脑",
                     style = MaterialTheme.typography.bodyMedium,
                     color = contentColor,
                 )
@@ -833,7 +833,7 @@ internal fun MixingHero(connectedCount: Int, onStopAll: () -> Unit) {
                     style = MaterialTheme.typography.headlineSmallEmphasized,
                 )
                 Text(
-                    text = "在下方设备卡片中分别调节音量与静音。",
+                    text = "分别调节音量与静音",
                     style = MaterialTheme.typography.bodyMedium,
                     color = contentColor,
                 )
@@ -1124,11 +1124,7 @@ private fun OfflineGroupHeader(
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text("未在线设备", style = MaterialTheme.typography.titleSmallEmphasized)
                 Text(
-                    text = if (expanded) {
-                        "点按收起 · $count 台"
-                    } else {
-                        "$count 台设备当前未在线，点按展开"
-                    },
+                    text = "$count 台设备",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1380,11 +1376,6 @@ internal fun DeviceRowCard(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        text = if (device.saved) "已保存到设备列表" else "发现于局域网",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
                     Spacer(Modifier.weight(1f))
                     TextButton(onClick = onSave) {
                         Icon(
@@ -1441,11 +1432,6 @@ private fun IpConnectCard(
                 )
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text("通过 IP 连接", style = MaterialTheme.typography.titleMediumEmphasized)
-                    Text(
-                        "手动输入 Sunshine 主机地址",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
                 }
                 Icon(
                     Icons.Rounded.ExpandMore,
@@ -1502,7 +1488,7 @@ private fun StatusDot(color: Color) {
 @Composable
 private fun MoonGlyph(size: androidx.compose.ui.unit.Dp) {
     val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
-    val glow = if (dark) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.secondaryContainer
+    val glow = MaterialTheme.colorScheme.secondary
     val cutout = MaterialTheme.colorScheme.primaryContainer
     val sparkle = if (dark) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.tertiaryContainer
     Canvas(modifier = Modifier.size(size)) {

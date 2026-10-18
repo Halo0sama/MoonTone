@@ -292,11 +292,6 @@ private fun SettingsIntro() {
                     style = MaterialTheme.typography.titleLargeEmphasized,
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                 )
-                Text(
-                    text = "主题、声音与权限都保存在这台设备上。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                )
             }
         }
     }
@@ -332,11 +327,7 @@ private fun ThemeModeSelector(selected: ThemeMode, onSelect: (ThemeMode) -> Unit
                 ) { onSelect(mode) }
             }
         }
-        Text(
-            text = "跟随系统会随手机的深色模式自动切换。",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+
     }
 }
 
